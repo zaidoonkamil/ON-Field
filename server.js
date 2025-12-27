@@ -29,6 +29,6 @@ sequelize.sync({ alter: true })
   }).catch((err) => console.error("❌ Error syncing database:", err));
 
 
-app.listen(1900, () => {
+app.listen(1001, () => {
   console.log("🚀 Server running on http://localhost:1001");
 });
