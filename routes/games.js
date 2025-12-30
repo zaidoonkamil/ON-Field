@@ -102,7 +102,7 @@ router.get("/games", async (req, res) => {
     const now = new Date();
 
     const { rows: games, count: total } = await Game.findAndCountAll({
-      order: [["startsAt", "ASC"]],
+      order: [["createdAt", "DESC"]],
       limit,
       offset,
     });
