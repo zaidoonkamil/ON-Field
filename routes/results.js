@@ -216,10 +216,10 @@ router.get("/games/:id/results", async (req, res) => {
     const slots = await GameSlot.findAll({
       where: { gameId },
       include: [{ model: User, as: "user", attributes: { exclude: ["password"] } }],
-      order: [["team","ASC"], ["role","ASC"], ["code","ASC"]],
+      order: [["team", "ASC"], ["role", "ASC"], ["code", "ASC"]],
     });
 
-    const mappedSlots = slots.map(s => {
+    const mappedSlots = slots.map((s) => {
       const j = s.toJSON();
       if (j.user) j.user.overall = calcOverall(j.user);
       return j;
@@ -230,20 +230,50 @@ router.get("/games/:id/results", async (req, res) => {
     const playerStats = await PlayerMatchStats.findAll({
       where: { gameId },
       include: [{ model: User, as: "user", attributes: { exclude: ["password"] } }],
-      order: [["isMotm","DESC"], ["goals","DESC"], ["assists","DESC"]],
+      order: [["isMotm", "DESC"], ["goals", "DESC"], ["assists", "DESC"]],
     });
 
-    const mappedPlayerStats = playerStats.map(p => {
+    const mappedPlayerStats = playerStats.map((p) => {
       const j = p.toJSON();
       if (j.user) j.user.overall = calcOverall(j.user);
       return j;
     });
 
+    const sumByTeam = (arr, team, key) =>
+      arr
+        .filter((p) => p.team === team)
+        .reduce((s, p) => s + (Number(p[key]) || 0), 0);
+
+    const goalsA = sumByTeam(mappedPlayerStats, "A", "goals");
+    const goalsB = sumByTeam(mappedPlayerStats, "B", "goals");
+
+    const assistsA = sumByTeam(mappedPlayerStats, "A", "assists");
+    const assistsB = sumByTeam(mappedPlayerStats, "B", "assists");
+
+    const yellowA = sumByTeam(mappedPlayerStats, "A", "yellowCards");
+    const yellowB = sumByTeam(mappedPlayerStats, "B", "yellowCards");
+
+    const redA = sumByTeam(mappedPlayerStats, "A", "redCards");
+    const redB = sumByTeam(mappedPlayerStats, "B", "redCards");
+
+    const motm = mappedPlayerStats.find((p) => p.isMotm === true) || null;
+
     return res.json({
       game,
-      lineups: mappedSlots,      
-      matchStats,          
+      lineups: mappedSlots,
+      matchStats,
       playerStats: mappedPlayerStats,
+
+      score: { goalsA, goalsB },
+      totals: {
+        assistsA,
+        assistsB,
+        yellowCardsA: yellowA,
+        yellowCardsB: yellowB,
+        redCardsA: redA,
+        redCardsB: redB,
+      },
+      motm,
     });
   } catch (e) {
     console.error(e);
