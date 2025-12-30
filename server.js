@@ -22,7 +22,7 @@ app.use("/", resultsRouter);
 app.use("/", notificationsRouter);
 
 
-sequelize.sync({ alter: true })
+sequelize.sync({ force: true })
   .then(() => {
     console.log("✅ Database & tables synced!");
     startCleanupJob();
