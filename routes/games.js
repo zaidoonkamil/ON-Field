@@ -125,6 +125,72 @@ router.get("/games", async (req, res) => {
   }
 });
 
+router.get("/games/open", async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "15", 10), 1), 50);
+    const offset = (page - 1) * limit;
+
+    const now = new Date();
+
+    const { rows: games, count: total } = await Game.findAndCountAll({
+      where: { status: "open" },
+      order: [["createdAt", "DESC"]],
+      limit,
+      offset,
+    });
+
+    return res.json({
+      data: games,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNext: offset + games.length < total,
+        hasPrev: page > 1,
+      },
+      serverNow: now.toISOString(),
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.get("/games/closed", async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "15", 10), 1), 50);
+    const offset = (page - 1) * limit;
+
+    const now = new Date();
+
+    const { rows: games, count: total } = await Game.findAndCountAll({
+      where: { status: "closed" },
+      order: [["createdAt", "DESC"]],
+      limit,
+      offset,
+    });
+
+    return res.json({
+      data: games,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNext: offset + games.length < total,
+        hasPrev: page > 1,
+      },
+      serverNow: now.toISOString(),
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 router.get("/games/:id", async (req, res) => {
   try {
     const gameId = req.params.id;
