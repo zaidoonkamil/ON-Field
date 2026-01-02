@@ -326,11 +326,16 @@ router.post("/games/:id/book", upload.none(), authenticateToken, async (req, res
 });
 
 // ✅ إلغاء حجز (اللاعب يلغي حجزة)
-router.post("/games/:id/unbook", upload.none(), authenticateToken, async (req, res) => {
+router.post("/games/:id/unbook", upload.none(), async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const gameId = Number(req.params.id);
-    const userId = req.user.id;
+    const userId = Number(req.body.userId);
+
+    if (!userId || !Number.isInteger(userId)) {
+        await t.rollback();
+        return res.status(400).json({ error: "userId مطلوب وبصيغة صحيحة" });
+      }
 
     const slot = await GameSlot.findOne({
       where: { gameId, userId },
