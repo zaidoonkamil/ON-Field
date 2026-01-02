@@ -8,6 +8,7 @@ const liveRouter = require("./routes/live");
 const gamesRouter = require("./routes/games");
 const resultsRouter = require("./routes/results.js");
 const notificationsRouter = require("./routes/notifications.js");
+const statsRouter = require("./routes/stats.js");
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.use("/", liveRouter);
 app.use("/", gamesRouter);
 app.use("/", resultsRouter);
 app.use("/", notificationsRouter);
+app.use("/", statsRouter);
 
 
 sequelize.sync({ force: false })
