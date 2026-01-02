@@ -116,27 +116,33 @@ router.put("/games/location-url/fix", async (req, res) => {
   try {
     const locationUrl = "https://maps.app.goo.gl/GDU2TtfFqtCE3yPr9";
 
-    // 1️⃣ إضافة العمود إذا غير موجود
-    await sequelize.query(`
-      ALTER TABLE Games
-      ADD COLUMN IF NOT EXISTS locationUrl VARCHAR(2048) NULL
-    `);
+    // 1) تأكد إن العمود موجود (MySQL القديم ما يدعم IF NOT EXISTS)
+    const [cols] = await sequelize.query(
+      "SHOW COLUMNS FROM `Games` LIKE 'locationUrl'"
+    );
 
-    // 2️⃣ تحديث كل المباريات (open + closed)
+    if (cols.length === 0) {
+      await sequelize.query(
+        "ALTER TABLE `Games` ADD COLUMN `locationUrl` VARCHAR(2048) NULL"
+      );
+    }
+
+    // 2) حدث كل المباريات (open + closed)
     const [updatedCount] = await Game.update(
       { locationUrl },
       { where: {} }
     );
 
     return res.json({
-      message: "locationUrl column ensured and updated for all games",
+      message: "Fixed: column ensured + updated all games",
+      columnAdded: cols.length === 0,
       updatedCount,
       locationUrl,
     });
   } catch (e) {
     console.error(e);
     return res.status(500).json({
-      error: "Failed to fix and update locationUrl",
+      error: "Internal Server Error",
       details: e.message,
     });
   }
