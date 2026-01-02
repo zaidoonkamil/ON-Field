@@ -95,60 +95,6 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
   }
 });
 
-router.put("/games/location-url/fill-default", async (req, res) => {
-  try {
-
-    const locationUrl = "https://maps.app.goo.gl/GDU2TtfFqtCE3yPr9";
-
-    const [updatedCount] = await Game.update(
-      { locationUrl },
-      { where: {} }
-    );
-
-    return res.json({ message: "Done", updatedCount, locationUrl });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: "Internal Server Error" });
-  }
-});
-
-router.put("/games/location-url/fix", async (req, res) => {
-  try {
-    const locationUrl = "https://maps.app.goo.gl/GDU2TtfFqtCE3yPr9";
-
-    // 1) تأكد إن العمود موجود (MySQL القديم ما يدعم IF NOT EXISTS)
-    const [cols] = await sequelize.query(
-      "SHOW COLUMNS FROM `Games` LIKE 'locationUrl'"
-    );
-
-    if (cols.length === 0) {
-      await sequelize.query(
-        "ALTER TABLE `Games` ADD COLUMN `locationUrl` VARCHAR(2048) NULL"
-      );
-    }
-
-    // 2) حدث كل المباريات (open + closed)
-    const [updatedCount] = await Game.update(
-      { locationUrl },
-      { where: {} }
-    );
-
-    return res.json({
-      message: "Fixed: column ensured + updated all games",
-      columnAdded: cols.length === 0,
-      updatedCount,
-      locationUrl,
-    });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({
-      error: "Internal Server Error",
-      details: e.message,
-    });
-  }
-});
-
-
 router.get("/games", async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page || "1", 15), 1);
