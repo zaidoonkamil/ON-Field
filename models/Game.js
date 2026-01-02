@@ -14,7 +14,14 @@ const Game = sequelize.define("Game", {
   startsAt: { 
     type: DataTypes.DATE, 
     allowNull: false 
-   },   
+   },  
+  locationUrl: {
+    type: DataTypes.STRING(2048),
+    allowNull: true,
+    validate: {
+      isUrl: true,
+    },
+  }, 
   formationSize: {
     type: DataTypes.ENUM("5", "7", "11"),
     allowNull: false,

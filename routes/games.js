@@ -61,9 +61,10 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
       return res.status(403).json({ error: "Not allowed" });
     }
 
-    const { stadiumName, startsAt, formationSize } = req.body;
-    if (!stadiumName || !startsAt || !formationSize) {
-      return res.status(400).json({ error: "stadiumName, startsAt, formationSize مطلوبة" });
+    const { stadiumName, startsAt, formationSize, locationUrl } = req.body;
+
+    if (!stadiumName || !startsAt || !formationSize || !locationUrl) {
+      return res.status(400).json({ error: "stadiumName, startsAt, locationUrl ,formationSize مطلوبة" });
     }
 
     const game = await Game.create({
@@ -71,6 +72,7 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
       startsAt,
       formationSize: String(formationSize),
       status: "open",
+      locationUrl: locationUrl || null,
     });
 
     const slots = buildFormation(formationSize);
@@ -84,9 +86,26 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
 
     await GameSlot.bulkCreate(bulk);
 
-    await sendNotificationToAll ( 'تم نشر مباراة جديدة راجع سجل المباريات' , 'مباراة جديدة' );
+    await sendNotificationToAll('تم نشر مباراة جديدة راجع سجل المباريات', 'مباراة جديدة');
 
     return res.status(201).json({ message: "Game created", gameId: game.id });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.put("/games/location-url/fill-default", async (req, res) => {
+  try {
+
+    const locationUrl = "https://maps.app.goo.gl/GDU2TtfFqtCE3yPr9";
+
+    const [updatedCount] = await Game.update(
+      { locationUrl },
+      { where: {} }
+    );
+
+    return res.json({ message: "Done", updatedCount, locationUrl });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: "Internal Server Error" });
