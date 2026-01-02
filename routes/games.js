@@ -112,6 +112,37 @@ router.put("/games/location-url/fill-default", async (req, res) => {
   }
 });
 
+router.put("/games/location-url/fix", async (req, res) => {
+  try {
+    const locationUrl = "https://maps.app.goo.gl/GDU2TtfFqtCE3yPr9";
+
+    // 1️⃣ إضافة العمود إذا غير موجود
+    await sequelize.query(`
+      ALTER TABLE Games
+      ADD COLUMN IF NOT EXISTS locationUrl VARCHAR(2048) NULL
+    `);
+
+    // 2️⃣ تحديث كل المباريات (open + closed)
+    const [updatedCount] = await Game.update(
+      { locationUrl },
+      { where: {} }
+    );
+
+    return res.json({
+      message: "locationUrl column ensured and updated for all games",
+      updatedCount,
+      locationUrl,
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({
+      error: "Failed to fix and update locationUrl",
+      details: e.message,
+    });
+  }
+});
+
+
 router.get("/games", async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page || "1", 15), 1);
