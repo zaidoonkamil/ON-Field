@@ -303,20 +303,21 @@ router.put("/users/:id", uploadImage.array("images", 5), async (req, res) => {
         phone: user.phone,
         role: user.role,
         position: user.position,
-        stats: {
-          spd: user.spd,
-          fin: user.fin,
-          pas: user.pas,
-          skl: user.skl,
-          tkl: user.tkl,
-          str: user.str,
-        },
+
+        spd: user.spd,
+        fin: user.fin,
+        pas: user.pas,
+        skl: user.skl,
+        tkl: user.tkl,
+        str: user.str,
+
         overall,
         image: user.image,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
     });
+
   } catch (err) {
     console.error("❌ Error updating user:", err);
     return res.status(500).json({ error: "Internal Server Error" });
