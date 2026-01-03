@@ -229,4 +229,99 @@ router.delete("/users/:id", async (req, res) => {
   }
 });
 
+router.put("/users/:id", uploadImage.array("images", 5), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findByPk(id);
+    if (!user) return res.status(404).json({ error: "المستخدم غير موجود" });
+
+    let { name, phone, password, role, position } = req.body;
+
+    if (position && !POSITIONS.includes(position)) {
+      return res.status(400).json({ error: "المركز غير صحيح" });
+    }
+
+    if (phone) {
+      phone = normalizePhone(phone);
+
+      const exists = await User.findOne({
+        where: { phone, id: { [Op.ne]: user.id } },
+      });
+      if (exists) {
+        return res.status(400).json({ error: "تم استخدام رقم الهاتف من مستخدم اخر" });
+      }
+
+      user.phone = phone;
+    }
+
+    if (name !== undefined) user.name = name;
+    if (role !== undefined) user.role = role;
+    if (position !== undefined) user.position = position || null;
+
+    const hasAnyStat =
+      req.body.spd !== undefined ||
+      req.body.fin !== undefined ||
+      req.body.pas !== undefined ||
+      req.body.skl !== undefined ||
+      req.body.tkl !== undefined ||
+      req.body.str !== undefined;
+
+    if (hasAnyStat) {
+      user.spd = clampStat(req.body.spd, user.spd ?? 100);
+      user.fin = clampStat(req.body.fin, user.fin ?? 100);
+      user.pas = clampStat(req.body.pas, user.pas ?? 100);
+      user.skl = clampStat(req.body.skl, user.skl ?? 100);
+      user.tkl = clampStat(req.body.tkl, user.tkl ?? 100);
+      user.str = clampStat(req.body.str, user.str ?? 100);
+    }
+
+    if (password) {
+      const hashedPassword = await bcrypt.hash(password, saltRounds);
+      user.password = hashedPassword;
+    }
+
+    const images = req.files && Array.isArray(req.files)
+      ? req.files.map((f) => f.filename)
+      : [];
+
+    if (images.length) {
+      user.image = { main: images[0], images };
+    }
+
+    await user.save();
+
+    const overall = Math.round(
+      (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
+    );
+
+    return res.status(200).json({
+      message: "تم تحديث بيانات المستخدم بنجاح",
+      user: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+        position: user.position,
+        stats: {
+          spd: user.spd,
+          fin: user.fin,
+          pas: user.pas,
+          skl: user.skl,
+          tkl: user.tkl,
+          str: user.str,
+        },
+        overall,
+        image: user.image,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
+    });
+  } catch (err) {
+    console.error("❌ Error updating user:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+
 module.exports = router;
