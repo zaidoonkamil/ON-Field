@@ -9,6 +9,7 @@ const gamesRouter = require("./routes/games");
 const resultsRouter = require("./routes/results.js");
 const notificationsRouter = require("./routes/notifications.js");
 const statsRouter = require("./routes/stats.js");
+const cors = require("cors");
 
 const app = express();
 
