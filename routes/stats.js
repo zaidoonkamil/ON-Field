@@ -52,34 +52,36 @@ router.get("/players/stats", async (req, res) => {
       distinct: true, 
     });
 
-    const players = rows.map((u) => {
-      const user = u.toJSON();
-      const statsRows = Array.isArray(user.stats) ? user.stats : [];
+    const players = rows
+      .map((u) => {
+        const user = u.toJSON();
+        const statsRows = Array.isArray(user.stats) ? user.stats : [];
 
-      const totals = statsRows.reduce(
-        (acc, r) => {
-          acc.games += 1;
-          acc.goals += Number(r.goals) || 0;
-          acc.assists += Number(r.assists) || 0;
-          acc.yellowCards += Number(r.yellowCards) || 0;
-          acc.redCards += Number(r.redCards) || 0;
-          if (r.isMotm) acc.motm += 1;
-          return acc;
-        },
-        { games: 0, goals: 0, assists: 0, yellowCards: 0, redCards: 0, motm: 0 }
-      );
+        const totals = statsRows.reduce(
+          (acc, r) => {
+            acc.games += 1;
+            acc.goals += Number(r.goals) || 0;
+            acc.assists += Number(r.assists) || 0;
+            acc.yellowCards += Number(r.yellowCards) || 0;
+            acc.redCards += Number(r.redCards) || 0;
+            if (r.isMotm) acc.motm += 1;
+            return acc;
+          },
+          { games: 0, goals: 0, assists: 0, yellowCards: 0, redCards: 0, motm: 0 }
+        );
 
-      return {
-        id: user.id,
-        name: user.name,
-        phone: user.phone,
-        role: user.role,
-        position: user.position,
-        overall: calcOverall(user),
-        image: user.image,
-        stats: totals,
-      };
-    });
+        return {
+          id: user.id,
+          name: user.name,
+          phone: user.phone,
+          role: user.role,
+          position: user.position,
+          overall: calcOverall(user),
+          image: user.image,
+          stats: totals,
+        };
+      }).sort((a, b) => b.stats.goals - a.stats.goals);
+
 
     return res.json({
       players,
