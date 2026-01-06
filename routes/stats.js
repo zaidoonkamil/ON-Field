@@ -6,6 +6,23 @@ const { User, PlayerMatchStats, Game } = require("../models");
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
+const safeString = (v, fallback = "") => {
+  if (v === null || v === undefined) return fallback;
+  const s = String(v).trim();
+  return s.length ? s : fallback;
+};
+
+const safeImage = (img) => {
+  const main = safeString(img?.main, "");
+  const images = Array.isArray(img?.images)
+    ? img.images.filter(Boolean).map(String)
+    : (main ? [main] : []);
+  return { main, images };
+};
+
+const safePosition = (p) => safeString(p, ""); 
+
+
 router.get("/players/stats", async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -67,12 +84,12 @@ router.get("/players/stats", async (req, res) => {
 
       return {
         id: user.id,
-        name: user.name,
-        phone: user.phone,
-        role: user.role,
-        position: user.position,
-        overall: calcOverall(user),
-        image: user.image,
+        name: safeString(user.name, "بدون اسم"),
+        phone: safeString(user.phone, ""),
+        role: safeString(user.role, "user"),
+        position: safePosition(user.position),
+        overall: Number.isFinite(calcOverall(user)) ? calcOverall(user) : 0,
+        image: safeImage(user.image),
         stats: totals,
       };
     });
