@@ -17,7 +17,8 @@ function buildFormation(size) {
       { code: "RB", label: "CB مدافع أيمن", role: "player" },
       { code: "CM", label: "CM وسط", role: "player" },
       { code: "CF", label: "CF رأس حربة", role: "player" },
-      { code: "BENCH", label: "احتياط", role: "bench" },
+      { code: "BENCH1", label: "احتياط 1", role: "bench" },
+      { code: "BENCH2", label: "احتياط 2", role: "bench" },
       { code: "COACH", label: "مدرب", role: "coach" },
     ];
   }
@@ -31,7 +32,8 @@ function buildFormation(size) {
       { code: "CM2", label: "CM وسط 2", role: "player" },
       { code: "AMF", label: "AMF صانع لعب", role: "player" },
       { code: "CF", label: "CF رأس حربة", role: "player" },
-      { code: "BENCH", label: "احتياط", role: "bench" },
+      { code: "BENCH1", label: "احتياط 1", role: "bench" },
+      { code: "BENCH2", label: "احتياط 2", role: "bench" },
       { code: "COACH", label: "مدرب", role: "coach" },
     ];
   }
@@ -47,7 +49,8 @@ function buildFormation(size) {
     { code: "LWF", label: "LWF مهاجم أيسر", role: "player" },
     { code: "RWF", label: "RWF مهاجم أيمن", role: "player" },
     { code: "CF", label: "CF رأس حربة", role: "player" },
-    { code: "BENCH", label: "احتياط", role: "bench" },
+    { code: "BENCH1", label: "احتياط 1", role: "bench" },
+    { code: "BENCH2", label: "احتياط 2", role: "bench" },
     { code: "COACH", label: "مدرب", role: "coach" },
   ];
 }
