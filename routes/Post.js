@@ -7,25 +7,61 @@ const fs = require("fs/promises");
 const multer = require("multer");
 const upload = multer();
 
+const MAX_POSTS = 20;
 
-router.post("/posts", uploadPostMedia.array("media", 10), async (req, res) => {
+async function deletePostWithFiles(post) {
+  const images = post.media?.images || [];
+  const videos = post.media?.videos || [];
+
+  for (const f of [...images, ...videos]) {
+    await safeDeleteFile(f);
+  }
+
+  await post.destroy();
+}
+
+async function enforceMaxPosts() {
+  const count = await Post.count();
+  if (count <= MAX_POSTS) return;
+
+  const toDeleteCount = count - MAX_POSTS;
+
+  const oldPosts = await Post.findAll({
+    order: [["createdAt", "ASC"]],
+    limit: toDeleteCount,
+  });
+
+  for (const p of oldPosts) {
+    await deletePostWithFiles(p);
+  }
+}
+
+router.post("/posts", uploadPostMedia.array("media", 50), async (req, res) => {
   try {
-    const { userId, text, type } = req.body;
+    const { userId, text } = req.body;
 
-    if (!type) return res.status(400).json({ error: "type مطلوب" });
-    if (!["image", "video"].includes(type)) {
-      return res.status(400).json({ error: "type لازم image أو video" });
+    if (!req.files?.length) {
+      return res.status(400).json({ error: "لازم ترفع صور/فيديوات" });
     }
-    if (!req.files?.length) return res.status(400).json({ error: "لازم ترفع صورة/فيديو" });
 
-    const files = req.files.map((f) => f.filename);
+    const images = [];
+    const videos = [];
+
+    for (const f of req.files) {
+      const main = (f.mimetype || "").split("/")[0];
+      if (main === "image") images.push(f.filename);
+      else if (main === "video") videos.push(f.filename);
+      else return res.status(400).json({ error: "مسموح فقط صور وفيديوات" });
+    }
 
     const post = await Post.create({
-      userId: userId ? Number(userId) : null, 
+      userId: userId ? Number(userId) : null,
       text: text || null,
-      type,
-      media: { files },
+      media: { images, videos },
     });
+
+    // ✅ بعد الإضافة: طبّق حد 20 واحذف الأقدم
+    await enforceMaxPosts();
 
     return res.status(201).json(post);
   } catch (e) {
@@ -68,13 +104,14 @@ router.delete("/posts/:id", async (req, res) => {
     const post = await Post.findByPk(id);
     if (!post) return res.status(404).json({ error: "المنشور غير موجود" });
 
-    const files = post.media?.files || [];
-    for (const f of files) {
+    const images = post.media?.images || [];
+    const videos = post.media?.videos || [];
+
+    for (const f of [...images, ...videos]) {
       await safeDeleteFile(f);
     }
 
     await post.destroy();
-
     return res.status(200).json({ message: "تم حذف المنشور بنجاح" });
   } catch (e) {
     console.error(e);

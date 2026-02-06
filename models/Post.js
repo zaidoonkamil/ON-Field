@@ -1,4 +1,3 @@
-// models/Post.js
 const { DataTypes } = require("sequelize");
 const sequelize = require("../config/db");
 
@@ -12,9 +11,12 @@ const Post = sequelize.define("Post", {
 
   text: { type: DataTypes.TEXT, allowNull: true },
 
-  type: { type: DataTypes.ENUM("image", "video"), allowNull: false },
-
-  media: { type: DataTypes.JSON, allowNull: false },
+  media: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: { images: [], videos: [] },
+  },
+  
 }, { timestamps: true });
 
 module.exports = Post;
