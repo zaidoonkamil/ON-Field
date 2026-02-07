@@ -88,10 +88,13 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
     }
 
     await GameSlot.bulkCreate(bulk);
+    res.status(201).json({ message: "Game created", gameId: game.id });
 
-    await sendNotificationToAll('تم نشر مباراة جديدة راجع سجل المباريات', 'مباراة جديدة');
 
-    return res.status(201).json({ message: "Game created", gameId: game.id });
+    sendNotificationToAll('تم نشر مباراة جديدة راجع سجل المباريات', 'مباراة جديدة')
+      .catch(err => console.error("sendNotificationToAll error:", err));
+
+    return;
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: "Internal Server Error" });
