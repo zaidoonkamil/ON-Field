@@ -36,74 +36,39 @@ async function enforceMaxPosts() {
   }
 }
 
-router.post("/posts", (req, res) => {
-  uploadPostMedia.array("media", 50)(req, res, async (err) => {
-    if (err) {
-      // 🔴 log أي خطأ بالرفع
-      console.error("Upload Error:", {
-        message: err.message,
-        code: err.code,
-        stack: err.stack,
-      });
+router.post("/posts", uploadPostMedia.array("media", 50), async (req, res) => {
+  try {
+    const { userId, text } = req.body;
 
-      return res.status(400).json({
-        error: "خطأ أثناء رفع الملفات",
-        details: err.message,
-      });
+    if (!req.files?.length) {
+      return res.status(400).json({ error: "لازم ترفع صور/فيديوات" });
     }
 
-    try {
-      const { userId, text } = req.body;
+    const images = [];
+    const videos = [];
 
-      if (!req.files?.length) {
-        console.error("Upload Error: No files uploaded", {
-          userId,
-          body: req.body,
-        });
-
-        return res.status(400).json({ error: "لازم ترفع صور/فيديوات" });
-      }
-
-      const images = [];
-      const videos = [];
-
-      for (const f of req.files) {
-        const main = (f.mimetype || "").split("/")[0];
-
-        if (main === "image") images.push(f.filename);
-        else if (main === "video") videos.push(f.filename);
-        else {
-          console.error("Invalid file type:", {
-            filename: f.originalname,
-            mimetype: f.mimetype,
-          });
-
-          return res.status(400).json({ error: "مسموح فقط صور وفيديوات" });
-        }
-      }
-
-      const post = await Post.create({
-        userId: userId ? Number(userId) : null,
-        text: text || null,
-        media: { images, videos },
-      });
-
-      await enforceMaxPosts();
-
-      return res.status(201).json(post);
-    } catch (e) {
-      // 🔥 أي خطأ داخل السيرفر
-      console.error("Post Create Error:", {
-        message: e.message,
-        stack: e.stack,
-        body: req.body,
-      });
-
-      return res.status(500).json({ error: "Internal Server Error" });
+    for (const f of req.files) {
+      const main = (f.mimetype || "").split("/")[0];
+      if (main === "image") images.push(f.filename);
+      else if (main === "video") videos.push(f.filename);
+      else return res.status(400).json({ error: "مسموح فقط صور وفيديوات" });
     }
-  });
+
+    const post = await Post.create({
+      userId: userId ? Number(userId) : null,
+      text: text || null,
+      media: { images, videos },
+    });
+
+    // ✅ بعد الإضافة: طبّق حد 20 واحذف الأقدم
+    await enforceMaxPosts();
+
+    return res.status(201).json(post);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
 });
-
 
 router.get("/posts", async (req, res) => {
   try {
