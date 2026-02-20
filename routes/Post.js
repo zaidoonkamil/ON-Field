@@ -7,7 +7,7 @@ const fs = require("fs/promises");
 const multer = require("multer");
 const upload = multer();
 
-const MAX_POSTS = 20;
+const MAX_POSTS = 15;
 
 async function deletePostWithFiles(post) {
   const images = post.media?.images || [];
