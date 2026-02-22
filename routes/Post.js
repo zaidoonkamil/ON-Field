@@ -36,7 +36,7 @@ async function enforceMaxPosts() {
   }
 }
 
-router.post("/posts", uploadPostMedia.array("media", 50), async (req, res) => {
+router.post("/posts", uploadPostMedia.array("media", 100), async (req, res) => {
   try {
     const { userId, text } = req.body;
 
