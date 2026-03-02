@@ -34,13 +34,12 @@ router.get("/players/stats", async (req, res) => {
     
     const search = safeString(req.query.search, "");
     const userWhere = { role: { [Op.notIn]: ["admin"] } };
-    if (search) {
-      const likeOp = Op.iLike || Op.like;
 
+    if (search) {
       userWhere[Op.or] = [
-        { name: { [likeOp]: `%${search}%` } },
-        { phone: { [likeOp]: `%${search}%` } },
-        { position: { [likeOp]: `%${search}%` } },
+        { name: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
+        { position: { [Op.like]: `%${search}%` } },
       ];
     }
     
