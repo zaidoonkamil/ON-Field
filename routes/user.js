@@ -3,7 +3,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const { Op } = require("sequelize");
-const { User, UserDevice } = require("../models");
+const { User, UserDevice, PlayerMatchStats, Game} = require("../models");
 const uploadImage = require("../middlewares/uploads");
 
 const router = express.Router();
