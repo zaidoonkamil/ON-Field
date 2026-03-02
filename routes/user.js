@@ -201,9 +201,9 @@ router.get("/profile", async (req, res) => {
       if (status) gameWhere.status = status;
 
       if (from || to) {
-        gameWhere.date = {};
-        if (from) gameWhere.date[Op.gte] = new Date(from);
-        if (to) gameWhere.date[Op.lte] = new Date(to);
+        gameWhere.startsAt = {};
+        if (from) gameWhere.startsAt[Op.gte] = new Date(from);
+        if (to) gameWhere.startsAt[Op.lte] = new Date(to);
       }
 
       const includeGame = (status || from || to)
@@ -212,7 +212,7 @@ router.get("/profile", async (req, res) => {
             as: "game",
             where: gameWhere,
             required: true,
-            attributes: ["id", "status", "date"],
+            attributes: ["id", "status", "startsAt"],
           }]
         : [];
 
@@ -252,11 +252,50 @@ router.get("/profile", async (req, res) => {
         (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
       );
 
+      const gameIds = [...new Set(statsRows.map(r => r.gameId).filter(Boolean))];
+
+      let wdl = { wins: 0, draws: 0, losses: 0 };
+
+      if (gameIds.length) {
+        const allStatsInGames = await PlayerMatchStats.findAll({
+          where: { gameId: { [Op.in]: gameIds } },
+          attributes: ["gameId", "team", "goals"],
+        });
+
+        const scoreMap = new Map();
+        for (const row of allStatsInGames) {
+          const j = row.toJSON();
+          const gid = j.gameId;
+          const team = j.team;
+          const goals = Number(j.goals) || 0;
+
+          if (!scoreMap.has(gid)) scoreMap.set(gid, { A: 0, B: 0 });
+          const s = scoreMap.get(gid);
+          if (team === "A") s.A += goals;
+          else if (team === "B") s.B += goals;
+        }
+
+        for (const r of statsRows) {
+          const s = scoreMap.get(r.gameId);
+          if (!s) continue;
+
+          const my = r.team === "A" ? s.A : s.B;
+          const opp = r.team === "A" ? s.B : s.A;
+
+          if (my > opp) wdl.wins += 1;
+          else if (my < opp) wdl.losses += 1;
+          else wdl.draws += 1;
+        }
+      }
+
       return res.status(200).json({
         ...user,
         position: user.position || "",
         overall,
-        stats: totals,
+        stats: {
+          ...totals,
+          ...wdl,
+        },
       });
     } catch (error) {
       console.error("❌ Error fetching user profile:", error);
