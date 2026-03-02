@@ -193,19 +193,70 @@ router.get("/profile", async (req, res) => {
     if (err) return res.status(401).json({ error: "Invalid token" });
 
     try {
-      const user = await User.findByPk(decoded.id, {
+      const status = req.query.status;
+      const from = req.query.from;
+      const to = req.query.to;
+
+      const gameWhere = {};
+      if (status) gameWhere.status = status;
+
+      if (from || to) {
+        gameWhere.date = {};
+        if (from) gameWhere.date[Op.gte] = new Date(from);
+        if (to) gameWhere.date[Op.lte] = new Date(to);
+      }
+
+      const includeGame = (status || from || to)
+        ? [{
+            model: Game,
+            as: "game",
+            where: gameWhere,
+            required: true,
+            attributes: ["id", "status", "date"],
+          }]
+        : [];
+
+      const userRow = await User.findByPk(decoded.id, {
         attributes: { exclude: ["password"] },
+        include: [
+          {
+            model: PlayerMatchStats,
+            as: "stats",
+            required: false,
+            attributes: ["gameId", "team", "goals", "assists", "yellowCards", "redCards", "isMotm"],
+            include: includeGame,
+          },
+        ],
+        distinct: true,
       });
 
-      if (!user) return res.status(404).json({ error: "User not found" });
+      if (!userRow) return res.status(404).json({ error: "User not found" });
+
+      const user = userRow.toJSON();
+      const statsRows = Array.isArray(user.stats) ? user.stats : [];
+
+      const totals = statsRows.reduce(
+        (acc, r) => {
+          acc.games += 1;
+          acc.goals += Number(r.goals) || 0;
+          acc.assists += Number(r.assists) || 0;
+          acc.yellowCards += Number(r.yellowCards) || 0;
+          acc.redCards += Number(r.redCards) || 0;
+          if (r.isMotm) acc.motm += 1;
+          return acc;
+        },
+        { games: 0, goals: 0, assists: 0, yellowCards: 0, redCards: 0, motm: 0 }
+      );
 
       const overall = Math.round(
         (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
       );
 
       return res.status(200).json({
-        ...user.toJSON(),
+        ...user,
+        position: user.position || "",
         overall,
+        stats: totals,
       });
     } catch (error) {
       console.error("❌ Error fetching user profile:", error);
