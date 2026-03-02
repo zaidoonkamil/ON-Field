@@ -94,7 +94,7 @@ router.get("/players/stats", async (req, res) => {
       };
     });
 
-    allPlayers.sort((a, b) => b.stats.goals - a.stats.goals);
+    allPlayers.sort((a, b) => b.name.localeCompare(a.name, 'ar'));
 
     const totalUsers = allPlayers.length;
     const totalPages = Math.ceil(totalUsers / limit);
