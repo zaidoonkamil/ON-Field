@@ -31,7 +31,19 @@ router.get("/players/stats", async (req, res) => {
     const status = req.query.status;
     const from = req.query.from;
     const to = req.query.to;
+    
+    const search = safeString(req.query.search, "");
+    const userWhere = { role: { [Op.notIn]: ["admin"] } };
+    if (search) {
+      const likeOp = Op.iLike || Op.like;
 
+      userWhere[Op.or] = [
+        { name: { [likeOp]: `%${search}%` } },
+        { phone: { [likeOp]: `%${search}%` } },
+        { position: { [likeOp]: `%${search}%` } },
+      ];
+    }
+    
     const gameWhere = {};
     if (status) gameWhere.status = status;
     if (from || to) {
@@ -51,7 +63,7 @@ router.get("/players/stats", async (req, res) => {
       : [];
 
     const rows = await User.findAll({
-      where: { role: { [Op.notIn]: ["admin"] } },
+      where: userWhere,
       attributes: { exclude: ["password"] },
       include: [
         {
