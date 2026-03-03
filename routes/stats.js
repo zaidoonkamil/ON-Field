@@ -256,6 +256,7 @@ router.get("/players/leaderboard", async (req, res) => {
           id: user.id,
           name: safeString(user.name, "بدون اسم"),
           phone: safeString(user.phone, ""),
+          role: safeString(user.role, "user"), 
           position: safePosition(user.position),
           overall: Number.isFinite(calcOverall(user)) ? calcOverall(user) : 0,
           image: safeImage(user.image),
