@@ -31,7 +31,27 @@ router.get("/players/stats", async (req, res) => {
     const status = req.query.status;
     const from = req.query.from;
     const to = req.query.to;
-
+    
+    const search = safeString(req.query.search, "");
+    const userWhere = {
+      [Op.and]: [
+        {
+          [Op.or]: [
+            { role: { [Op.ne]: "admin" } },
+            { role: { [Op.is]: null } },
+          ],
+        },
+      ],
+    };
+    
+    if (search) {
+      userWhere[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
+        { position: { [Op.like]: `%${search}%` } },
+      ];
+    }
+    
     const gameWhere = {};
     if (status) gameWhere.status = status;
     if (from || to) {
@@ -51,7 +71,7 @@ router.get("/players/stats", async (req, res) => {
       : [];
 
     const rows = await User.findAll({
-      where: { role: { [Op.notIn]: ["admin"] } },
+      where: userWhere,
       attributes: { exclude: ["password"] },
       include: [
         {
@@ -94,7 +114,9 @@ router.get("/players/stats", async (req, res) => {
       };
     });
 
-    allPlayers.sort((a, b) => b.stats.goals - a.stats.goals);
+    allPlayers.sort((a, b) => 
+      a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })
+    );
 
     const totalUsers = allPlayers.length;
     const totalPages = Math.ceil(totalUsers / limit);
