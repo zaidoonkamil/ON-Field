@@ -148,4 +148,141 @@ router.get("/players/stats", async (req, res) => {
   }
 });
 
+router.get("/players/leaderboard", async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
+
+    const by = safeString(req.query.by, "goals").toLowerCase();
+    const team = safeString(req.query.team, "");
+    const min = Number(req.query.min ?? 1);
+
+    const status = req.query.status;
+    const from = req.query.from;
+    const to = req.query.to;
+
+    const searchRaw = safeString(req.query.search, "").trim();
+
+    const userWhere = { role: { [Op.ne]: "admin" } };
+
+    if (searchRaw) {
+      const search = escapeLike(searchRaw);
+      const or = [
+        { name: { [Op.like]: `%${search}%` } },
+        { position: { [Op.eq]: searchRaw } },
+      ];
+
+      if (hasDigits(searchRaw)) {
+        const phoneSearch = normalizePhone(searchRaw);
+        or.push(
+          where(fn("REPLACE", col("User.phone"), " ", ""), {
+            [Op.like]: `%${phoneSearch}%`,
+          })
+        );
+      }
+
+      userWhere[Op.or] = or;
+    }
+
+    const gameWhere = {};
+    if (status) gameWhere.status = status;
+    if (from || to) {
+      gameWhere.date = {};
+      if (from) gameWhere.date[Op.gte] = `${from} 00:00:00`;
+      if (to) gameWhere.date[Op.lte] = `${to} 23:59:59`;
+    }
+
+    const statsWhere = {};
+    if (team) statsWhere.team = team;
+
+    const rows = await User.findAll({
+      where: userWhere,
+      attributes: { exclude: ["password"] },
+      include: [
+        {
+          model: PlayerMatchStats,
+          as: "stats",
+          required: false,
+          where: Object.keys(statsWhere).length ? statsWhere : undefined,
+          attributes: ["goals", "assists", "yellowCards", "redCards", "isMotm"],
+          include: (status || from || to)
+            ? [{
+                model: Game,
+                as: "game",
+                where: gameWhere,
+                required: false,
+                attributes: ["id", "status", "date"],
+              }]
+            : [],
+        },
+      ],
+      distinct: true,
+    });
+
+    const players = rows
+      .map((u) => {
+        const user = u.toJSON();
+        const statsRows = Array.isArray(user.stats) ? user.stats : [];
+
+        const totals = statsRows.reduce(
+          (acc, r) => {
+            acc.games += 1;
+            acc.goals += Number(r.goals) || 0;
+            acc.assists += Number(r.assists) || 0;
+            acc.yellowCards += Number(r.yellowCards) || 0;
+            acc.redCards += Number(r.redCards) || 0;
+            if (r.isMotm) acc.motm += 1;
+            return acc;
+          },
+          { 
+            games: 0, 
+            goals: 0, 
+            assists: 0, 
+            yellowCards: 0, 
+            redCards: 0, 
+            motm: 0 
+          }
+        );
+        totals.totalCards = totals.yellowCards + totals.redCards;
+
+        const cards = totals.yellowCards + totals.redCards;
+
+        let metric = 0;
+        if (by === "assists") metric = totals.assists;
+        else if (by === "cards") metric = cards;
+        else metric = totals.goals;
+
+        return {
+          id: user.id,
+          name: safeString(user.name, "بدون اسم"),
+          phone: safeString(user.phone, ""),
+          position: safePosition(user.position),
+          overall: Number.isFinite(calcOverall(user)) ? calcOverall(user) : 0,
+          image: safeImage(user.image),
+          stats: totals,
+          cards,
+          metric,
+        };
+      })
+      .filter((p) => (Number.isFinite(min) ? p.metric >= min : p.metric > 0))
+      .sort((a, b) => b.metric - a.metric);
+
+    const totalUsers = players.length;
+    const totalPages = Math.ceil(totalUsers / limit);
+    const start = (page - 1) * limit;
+    const paged = players.slice(start, start + limit);
+
+    return res.json({
+      by,
+      team: team || null,
+      players: paged,
+      pagination: { totalUsers, currentPage: page, totalPages, limit },
+    });
+  } catch (e) {
+    console.error("❌ leaderboard error:", e);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+
 module.exports = router;
