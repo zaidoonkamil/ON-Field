@@ -6,7 +6,10 @@ const { fn, col, where } = require("sequelize");
 
 const escapeLike = (s) => String(s).replace(/[\\%_]/g, "\\$&");
 
-const normalizePhone = (s) =>String(s || "").replace(/\s+/g, "").replace(/[^\d+]/g, "");
+const normalizePhone = (s) =>
+  String(s || "").replace(/\s+/g, "").replace(/[^\d+]/g, "");
+
+const hasDigits = (s) => /\d/.test(String(s || ""));
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
@@ -37,24 +40,31 @@ router.get("/players/stats", async (req, res) => {
     const from = req.query.from;
     const to = req.query.to;
     
-const searchRaw = safeString(req.query.search, "");
-const search = escapeLike(searchRaw);          // يهرب % و _
-const phoneSearch = normalizePhone(searchRaw); // للهاتف
+    const searchRaw = safeString(req.query.search, "").trim();
 
     const userWhere = {
       role: { [Op.ne]: "admin" },
     };
 
     if (searchRaw) {
-      userWhere[Op.or] = [
+      const search = escapeLike(searchRaw);
+      const or = [
         { name: { [Op.like]: `%${search}%` } },
-
-        where(fn("REPLACE", col("phone"), " ", ""), {
-          [Op.like]: `%${phoneSearch}%`,
-        }),
 
         { position: { [Op.eq]: searchRaw } },
       ];
+
+      if (hasDigits(searchRaw)) {
+        const phoneSearch = normalizePhone(searchRaw);
+
+        or.push(
+          where(fn("REPLACE", col("User.phone"), " ", ""), {
+            [Op.like]: `%${phoneSearch}%`,
+          })
+        );
+      }
+
+      userWhere[Op.or] = or;
     }
     
     const gameWhere = {};
