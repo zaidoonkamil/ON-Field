@@ -2,6 +2,11 @@ const express = require("express");
 const router = express.Router();
 const { Op } = require("sequelize");
 const { User, PlayerMatchStats, Game } = require("../models");
+const { fn, col, where } = require("sequelize");
+
+const escapeLike = (s) => String(s).replace(/[\\%_]/g, "\\$&");
+
+const normalizePhone = (s) =>String(s || "").replace(/\s+/g, "").replace(/[^\d+]/g, "");
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
@@ -32,23 +37,23 @@ router.get("/players/stats", async (req, res) => {
     const from = req.query.from;
     const to = req.query.to;
     
-    const search = safeString(req.query.search, "");
+const searchRaw = safeString(req.query.search, "");
+const search = escapeLike(searchRaw);          // يهرب % و _
+const phoneSearch = normalizePhone(searchRaw); // للهاتف
+
     const userWhere = {
-      [Op.and]: [
-        {
-          [Op.or]: [
-            { role: { [Op.ne]: "admin" } },
-            { role: { [Op.is]: null } },
-          ],
-        },
-      ],
+      role: { [Op.ne]: "admin" },
     };
-    
-    if (search) {
+
+    if (searchRaw) {
       userWhere[Op.or] = [
         { name: { [Op.like]: `%${search}%` } },
-        { phone: { [Op.like]: `%${search}%` } },
-        { position: { [Op.like]: `%${search}%` } },
+
+        where(fn("REPLACE", col("phone"), " ", ""), {
+          [Op.like]: `%${phoneSearch}%`,
+        }),
+
+        { position: { [Op.eq]: searchRaw } },
       ];
     }
     
@@ -115,7 +120,7 @@ router.get("/players/stats", async (req, res) => {
     });
 
     allPlayers.sort((a, b) => 
-      a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })
+      a.name.localeCompare(b.name, 'ar', { sensitivity: 'base' })
     );
 
     const totalUsers = allPlayers.length;
