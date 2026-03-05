@@ -3,7 +3,7 @@ const router = express.Router();
 const sequelize = require("../config/db");
 const upload = require("../middlewares/uploads");
 const { authenticateToken } = require("../middlewares/auth.js");
-const { User, MonthlySquad, MonthlySquadSlot } = require("../models");
+const { User, MonthlySquad, MonthlySquadSlot, PlayerMatchStats, Game  } = require("../models");
 
 function buildFormation(size) {
   if (String(size) === "5") {
