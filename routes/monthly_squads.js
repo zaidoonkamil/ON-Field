@@ -272,4 +272,41 @@ router.delete("/monthly-squads/:id", authenticateToken, async (req, res) => {
   }
 });
 
+router.put("/monthly-squads/:id", upload.none(), authenticateToken, async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    if (!isAdmin(req)) {
+      await t.rollback();
+      return res.status(403).json({ error: "Not allowed" });
+    }
+
+    const squadId = Number(req.params.id);
+    const { title, status } = req.body;
+
+    if (!title || !String(title).trim()) {
+      await t.rollback();
+      return res.status(400).json({ error: "title مطلوب" });
+    }
+
+    const squad = await MonthlySquad.findByPk(squadId, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!squad) {
+      await t.rollback();
+      return res.status(404).json({ error: "التشكيلة غير موجودة" });
+    }
+
+    squad.title = String(title).trim();
+
+    if (status) squad.status = String(status);
+
+    await squad.save({ transaction: t });
+
+    await t.commit();
+    return res.json({ message: "تم تحديث اسم التشكيلة", squad });
+  } catch (e) {
+    await t.rollback();
+    console.error(e);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 module.exports = router;
