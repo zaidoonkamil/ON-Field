@@ -208,7 +208,9 @@ router.get("/monthly-squads/:id", async (req, res) => {
 
     return res.json({ squad, slots: mapped });
   } catch (e) {
-    console.error(e);
+    console.error("❌ monthly-squads/:id error:", e?.message);
+    console.error(e?.stack);
+    console.error("Sequelize:", e?.parent || e?.original || e);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
