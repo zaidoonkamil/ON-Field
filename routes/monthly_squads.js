@@ -131,19 +131,77 @@ router.get("/monthly-squads/:id", async (req, res) => {
     const squad = await MonthlySquad.findByPk(squadId);
     if (!squad) return res.status(404).json({ error: "التشكيلة غير موجودة" });
 
+    const from = req.query.from;
+    const to = req.query.to;
+
+    const gameWhere = {};
+    if (from || to) {
+      gameWhere.date = {};
+      if (from) gameWhere.date[Op.gte] = new Date(from);
+      if (to) gameWhere.date[Op.lte] = new Date(to);
+    }
+
     const slots = await MonthlySquadSlot.findAll({
       where: { squadId },
-      include: [{
-        model: User,
-        as: "user",
-        attributes: { exclude: ["password"] },
-      }],
+      include: [
+        {
+          model: User,
+          as: "user",
+          attributes: { exclude: ["password"] },
+          include: [
+            {
+              model: PlayerMatchStats,
+              as: "stats",
+              required: false,
+              attributes: ["gameId", "team", "goals", "assists", "yellowCards", "redCards", "isMotm"],
+              include: (from || to)
+                ? [{
+                    model: Game,
+                    as: "game",
+                    where: gameWhere,
+                    required: true,
+                    attributes: ["id", "status", "date"],
+                  }]
+                : [{
+                    model: Game,
+                    as: "game",
+                    required: false,
+                    attributes: ["id", "status", "date"],
+                  }],
+            },
+          ],
+        },
+      ],
       order: [["role", "ASC"], ["code", "ASC"]],
     });
 
-    const mapped = slots.map(s => {
+    const mapped = slots.map((s) => {
       const j = s.toJSON();
-      if (j.user) j.user.overall = calcOverall(j.user);
+
+      if (j.user) {
+        j.user.overall = calcOverall(j.user);
+
+        const statsRows = Array.isArray(j.user.stats) ? j.user.stats : [];
+        const totals = statsRows.reduce(
+          (acc, r) => {
+            if (!r.gameId) return acc;
+
+            acc.games += 1;
+            acc.goals += Number(r.goals) || 0;
+            acc.assists += Number(r.assists) || 0;
+            acc.yellowCards += Number(r.yellowCards) || 0;
+            acc.redCards += Number(r.redCards) || 0;
+            if (r.isMotm) acc.motm += 1;
+            return acc;
+          },
+          { games: 0, goals: 0, assists: 0, yellowCards: 0, redCards: 0, motm: 0 }
+        );
+
+        totals.totalCards = totals.yellowCards + totals.redCards;
+        j.user.statsTotals = totals;
+
+      }
+
       return j;
     });
 
