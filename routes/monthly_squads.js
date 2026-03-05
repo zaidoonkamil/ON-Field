@@ -161,13 +161,13 @@ router.get("/monthly-squads/:id", async (req, res) => {
                     as: "game",
                     where: gameWhere,
                     required: true,
-                    attributes: ["id", "status", "date"],
+                    attributes: ["id", "status", "startsAt"],
                   }]
                 : [{
                     model: Game,
                     as: "game",
                     required: false,
-                    attributes: ["id", "status", "date"],
+                    attributes: ["id", "status", "startsAt"],
                   }],
             },
           ],
