@@ -6,6 +6,8 @@ const GameSlot = require("./GameSlot");
 const MatchStats = require("./MatchStats");
 const PlayerMatchStats = require("./PlayerMatchStats");
 const LiveStream = require("./LiveStream");
+const MonthlySquad = require("./MonthlySquad");
+const MonthlySquadSlot = require("./MonthlySquadSlot");
 
 Game.hasMany(GameSlot, { foreignKey: "gameId", as: "slots", onDelete: "CASCADE", hooks: true });
 GameSlot.belongsTo(Game, { foreignKey: "gameId", as: "game" });
@@ -25,6 +27,12 @@ UserDevice.belongsTo(User, { foreignKey: "user_id", as: "user" });
 User.hasMany(GameSlot, { foreignKey: "userId", as: "gameSlots", onDelete: "SET NULL" });
 GameSlot.belongsTo(User, { foreignKey: "userId", as: "user" });
 
+MonthlySquad.hasMany(MonthlySquadSlot, { foreignKey: "squadId", as: "slots", onDelete: "CASCADE",hooks: true,});
+MonthlySquadSlot.belongsTo(MonthlySquad, { foreignKey: "squadId", as: "squad" });
+
+User.hasMany(MonthlySquadSlot, { foreignKey: "userId", as: "monthlySquadSlots", onDelete: "SET NULL" });
+MonthlySquadSlot.belongsTo(User, { foreignKey: "userId", as: "user" });
+
 module.exports = {
   User,
   UserDevice,
@@ -34,4 +42,6 @@ module.exports = {
   MatchStats,
   PlayerMatchStats,
   LiveStream,
+  MonthlySquad,
+  MonthlySquadSlot,
 };

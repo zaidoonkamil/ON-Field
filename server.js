@@ -9,6 +9,7 @@ const gamesRouter = require("./routes/games");
 const resultsRouter = require("./routes/results.js");
 const notificationsRouter = require("./routes/notifications.js");
 const statsRouter = require("./routes/stats.js");
+const monthlySquadsRouter =require("./routes/monthly_squads.js");
 const cors = require("cors");
 
 const app = express();
@@ -24,6 +25,7 @@ app.use("/", gamesRouter);
 app.use("/", resultsRouter);
 app.use("/", notificationsRouter);
 app.use("/", statsRouter);
+app.use("/", monthlySquadsRouter);
 
 
 sequelize.sync({ force: false })
