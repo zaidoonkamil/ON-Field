@@ -4,6 +4,7 @@ const sequelize = require("../config/db");
 const upload = require("../middlewares/uploads");
 const { authenticateToken } = require("../middlewares/auth.js");
 const { User, MonthlySquad, MonthlySquadSlot, PlayerMatchStats, Game  } = require("../models");
+const { Op } = require("sequelize");
 
 function buildFormation(size) {
   if (String(size) === "5") {
