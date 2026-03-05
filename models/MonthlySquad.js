@@ -17,7 +17,7 @@ const MonthlySquad = sequelize.define("MonthlySquad", {
   status: {
     type: DataTypes.ENUM("draft", "published"),
     allowNull: false,
-    defaultValue: "draft",
+    defaultValue: "published",
   },
 
   createdBy: {
