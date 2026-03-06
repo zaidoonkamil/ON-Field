@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { PlayerOfMonth, User } = require("../models");
+const { PlayerOfMonth, User, PlayerMatchStats } = require("../models");
 const { authenticateToken } = require("../middlewares/auth");
 
 const calcOverall = (u) =>
