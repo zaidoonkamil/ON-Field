@@ -6,29 +6,20 @@ const { authenticateToken } = require("../middlewares/auth");
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
-const normalizeMonth = (month) => {
-  if (!month) {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    return `${y}-${m}`;
-  }
-  return String(month).trim();
-};
-
 router.post("/player-of-month", authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Not allowed" });
     }
 
-    const { userId, month, note } = req.body;
+    const { userId, note } = req.body;
 
     if (!userId) {
       return res.status(400).json({ error: "userId مطلوب" });
     }
 
-    const selectedMonth = normalizeMonth(month);
+    const now = new Date();
+    const selectedMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
     const user = await User.findByPk(userId, {
       attributes: { exclude: ["password"] },
@@ -42,12 +33,24 @@ router.post("/player-of-month", authenticateToken, async (req, res) => {
       return res.status(400).json({ error: "لا يمكن اختيار أدمن كلاعب الشهر" });
     }
 
-    const record = await PlayerOfMonth.upsert({
-      month: selectedMonth,
-      userId: user.id,
-      note: note || null,
-      image: user.image || null,
+    const existing = await PlayerOfMonth.findOne({
+      where: { month: selectedMonth },
     });
+
+    if (existing) {
+      await existing.update({
+        userId: user.id,
+        note: note || null,
+        image: user.image || null,
+      });
+    } else {
+      await PlayerOfMonth.create({
+        month: selectedMonth,
+        userId: user.id,
+        note: note || null,
+        image: user.image || null,
+      });
+    }
 
     return res.status(200).json({
       message: "تم تحديد لاعب الشهر بنجاح",
