@@ -163,24 +163,75 @@ router.get("/usersOnly", async (req, res) => {
   }
 });
 
-router.get("/user/:id", async (req, res) => {
+router.get("/user-stats/:id", async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id, {
       attributes: { exclude: ["password"] },
+      include: [
+        {
+          model: PlayerMatchStats,
+          as: "stats",
+          required: false,
+          attributes: [
+            "gameId",
+            "team",
+            "goals",
+            "assists",
+            "yellowCards",
+            "redCards",
+            "isMotm",
+          ],
+        },
+      ],
+      distinct: true,
     });
 
-    if (!user) return res.status(404).json({ error: "المستخدم غير موجود" });
+    if (!user) {
+      return res.status(404).json({ error: "المستخدم غير موجود" });
+    }
+
+    const userJson = user.toJSON();
+    const statsRows = Array.isArray(userJson.stats) ? userJson.stats : [];
+
+    const totals = statsRows.reduce(
+      (acc, r) => {
+        acc.games += 1;
+        acc.goals += Number(r.goals) || 0;
+        acc.assists += Number(r.assists) || 0;
+        acc.yellowCards += Number(r.yellowCards) || 0;
+        acc.redCards += Number(r.redCards) || 0;
+        if (r.isMotm) acc.motm += 1;
+        return acc;
+      },
+      {
+        games: 0,
+        goals: 0,
+        assists: 0,
+        yellowCards: 0,
+        redCards: 0,
+        motm: 0,
+      }
+    );
 
     const overall = Math.round(
-      (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
+      (userJson.spd + userJson.fin + userJson.pas + userJson.skl + userJson.tkl + userJson.str) / 6
     );
 
     return res.status(200).json({
-      ...user.toJSON(),
-      overall, 
+      id: userJson.id,
+      name: userJson.name,
+      phone: userJson.phone,
+      role: userJson.role,
+      position: userJson.position || "",
+      image: userJson.image,
+      overall,
+      stats: {
+        ...totals,
+        totalCards: totals.yellowCards + totals.redCards,
+      },
     });
   } catch (err) {
-    console.error("❌ Error fetching user:", err);
+    console.error("❌ Error fetching user stats:", err);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
