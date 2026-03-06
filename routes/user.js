@@ -163,6 +163,28 @@ router.get("/usersOnly", async (req, res) => {
   }
 });
 
+router.get("/user/:id", async (req, res) => {
+  try {
+    const user = await User.findByPk(req.params.id, {
+      attributes: { exclude: ["password"] },
+    });
+
+    if (!user) return res.status(404).json({ error: "المستخدم غير موجود" });
+
+    const overall = Math.round(
+      (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
+    );
+
+    return res.status(200).json({
+      ...user.toJSON(),
+      overall, 
+    });
+  } catch (err) {
+    console.error("❌ Error fetching user:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 router.get("/user-stats/:id", async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id, {
