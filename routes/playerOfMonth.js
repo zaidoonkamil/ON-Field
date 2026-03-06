@@ -2,11 +2,13 @@ const express = require("express");
 const router = express.Router();
 const { PlayerOfMonth, User, PlayerMatchStats } = require("../models");
 const { authenticateToken } = require("../middlewares/auth");
+const multer = require("multer");
+const upload = multer();
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
-router.post("/player-of-month", authenticateToken, async (req, res) => {
+router.post("/player-of-month", authenticateToken, upload.none(), async (req, res) => {
   try {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Not allowed" });
