@@ -2,13 +2,12 @@ const express = require("express");
 const router = express.Router();
 const { PlayerOfMonth, User, PlayerMatchStats } = require("../models");
 const { authenticateToken } = require("../middlewares/auth");
-const multer = require("multer");
-const upload = multer();
+const uploadImage = require("../middlewares/uploads");
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
-router.post("/player-of-month", authenticateToken, upload.none(), async (req, res) => {
+router.post("/player-of-month", authenticateToken, uploadImage.single("image"), async (req, res) => {
   try {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Not allowed" });
@@ -35,22 +34,31 @@ router.post("/player-of-month", authenticateToken, upload.none(), async (req, re
       return res.status(400).json({ error: "لا يمكن اختيار أدمن كلاعب الشهر" });
     }
 
+    const file = req.file;
+    let imageData = null;
+    if (file) {
+      imageData = { main: file.filename };
+    }
+
     const existing = await PlayerOfMonth.findOne({
       where: { month: selectedMonth },
     });
 
     if (existing) {
-      await existing.update({
+      const updateObj = {
         userId: user.id,
         note: note || null,
-        image: user.image || null,
-      });
+      };
+      if (imageData) {
+        updateObj.image = imageData;
+      }
+      await existing.update(updateObj);
     } else {
       await PlayerOfMonth.create({
         month: selectedMonth,
         userId: user.id,
         note: note || null,
-        image: user.image || null,
+        image: imageData || user.image || null,
       });
     }
 
@@ -133,10 +141,14 @@ router.get("/player-of-month", async (req, res) => {
       (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
     );
 
+    // pick image from record; fall back to user image if the record doesn't have one
+    const responseImage = item.image || (user && user.image) || null;
+
     return res.json({
       id: item.id,
       month: item.month,
       note: item.note || "",
+      image: responseImage,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
       player: {
@@ -184,6 +196,7 @@ router.get("/player-of-month/history", async (req, res) => {
         id: j.id,
         month: j.month,
         note: j.note || "",
+        image: j.image || null,
         player: j.user
           ? {
               ...j.user,
