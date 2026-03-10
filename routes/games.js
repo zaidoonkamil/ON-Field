@@ -64,10 +64,19 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
       return res.status(403).json({ error: "Not allowed" });
     }
 
-    const { stadiumName, startsAt, formationSize, locationUrl } = req.body;
+    const { stadiumName, startsAt, formationSize, locationUrl, price } = req.body;
 
     if (!stadiumName || !startsAt || !formationSize || !locationUrl) {
-      return res.status(400).json({ error: "stadiumName, startsAt, locationUrl ,formationSize مطلوبة" });
+      return res.status(400).json({ error: "stadiumName, startsAt, locationUrl, formationSize مطلوبة" });
+    }
+
+    const numericPrice =
+      price === undefined || price === null || price === ""
+        ? 0
+        : Number(price);
+
+    if (Number.isNaN(numericPrice) || numericPrice < 0) {
+      return res.status(400).json({ error: "price يجب أن يكون رقم صحيح أو عشري وأكبر أو يساوي 0" });
     }
 
     const game = await Game.create({
@@ -76,6 +85,7 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
       formationSize: String(formationSize),
       status: "open",
       locationUrl: locationUrl || null,
+      price: numericPrice,
     });
 
     const slots = buildFormation(formationSize);
@@ -88,8 +98,12 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
     }
 
     await GameSlot.bulkCreate(bulk);
-    res.status(201).json({ message: "Game created", gameId: game.id });
 
+    res.status(201).json({
+      message: "Game created",
+      gameId: game.id,
+      price: game.price,
+    });
 
     sendNotificationToAll('تم نشر مباراة جديدة راجع سجل المباريات', 'مباراة جديدة')
       .catch(err => console.error("sendNotificationToAll error:", err));
