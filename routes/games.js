@@ -8,38 +8,6 @@ const upload = require("../middlewares/uploads");
 const { authenticateToken } = require("../middlewares/auth.js");
 const { sendNotificationToAll  } = require('../services/notifications');
 
-
-router.post("/fix/add-game-price-column", authenticateToken, async (req, res) => {
-  try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ error: "Not allowed" });
-    }
-
-    const [results] = await sequelize.query(`
-      SHOW COLUMNS FROM Games LIKE 'price';
-    `);
-
-    if (results.length === 0) {
-      await sequelize.query(`
-        ALTER TABLE Games
-        ADD COLUMN price DECIMAL(10,2) NOT NULL DEFAULT 0;
-      `);
-
-      return res.json({
-        message: "price column added to Games table successfully"
-      });
-    }
-
-    return res.json({
-      message: "price column already exists"
-    });
-
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: "Internal Server Error" });
-  }
-});
-
 function buildFormation(size) {
   if (String(size) === "5") {
     return [
@@ -86,6 +54,11 @@ function buildFormation(size) {
     { code: "COACH", label: "مدرب", role: "coach" },
   ];
 }
+
+const formatPrice = (value) => {
+  if (value === null || value === undefined || value === "") return 0;
+  return Number(value);
+};
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
@@ -134,7 +107,7 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
     res.status(201).json({
       message: "Game created",
       gameId: game.id,
-      price: game.price,
+      price: formatPrice(game.price),
     });
 
     sendNotificationToAll('تم نشر مباراة جديدة راجع سجل المباريات', 'مباراة جديدة')
@@ -161,8 +134,16 @@ router.get("/games", async (req, res) => {
       offset,
     });
 
+    const data = games.map((g) => {
+      const j = g.toJSON();
+      return {
+        ...j,
+        price: formatPrice(j.price),
+      };
+    });
+
     return res.json({
-      data: games,
+      data,
       pagination: {
         page,
         limit,
@@ -194,8 +175,16 @@ router.get("/games/open", async (req, res) => {
       offset,
     });
 
+    const data = games.map((g) => {
+      const j = g.toJSON();
+      return {
+        ...j,
+        price: formatPrice(j.price),
+      };
+    });
+
     return res.json({
-      data: games,
+      data,
       pagination: {
         page,
         limit,
@@ -227,8 +216,16 @@ router.get("/games/closed", async (req, res) => {
       offset,
     });
 
+    const data = games.map((g) => {
+      const j = g.toJSON();
+      return {
+        ...j,
+        price: formatPrice(j.price),
+      };
+    });
+
     return res.json({
-      data: games,
+      data,
       pagination: {
         page,
         limit,
@@ -268,7 +265,15 @@ router.get("/games/:id", async (req, res) => {
       return j;
     });
 
-    return res.json({ game, slots: mapped });
+    const gameData = game.toJSON();
+
+    return res.json({
+      game: {
+        ...gameData,
+        price: formatPrice(gameData.price),
+      },
+      slots: mapped,
+    });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: "Internal Server Error" });
