@@ -64,7 +64,7 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
       return res.status(403).json({ error: "Not allowed" });
     }
 
-    const { stadiumName, startsAt, formationSize, locationUrl } = req.body;
+    const { stadiumName, startsAt, formationSize, locationUrl, price } = req.body;
 
     if (!stadiumName || !startsAt || !formationSize || !locationUrl) {
       return res.status(400).json({ error: "stadiumName, startsAt, locationUrl ,formationSize مطلوبة" });
@@ -76,6 +76,7 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
       formationSize: String(formationSize),
       status: "open",
       locationUrl: locationUrl || null,
+      price: price ? parseFloat(price) : 0.00,
     });
 
     const slots = buildFormation(formationSize);
