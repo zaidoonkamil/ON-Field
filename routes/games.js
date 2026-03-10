@@ -8,6 +8,38 @@ const upload = require("../middlewares/uploads");
 const { authenticateToken } = require("../middlewares/auth.js");
 const { sendNotificationToAll  } = require('../services/notifications');
 
+
+router.post("/fix/add-game-price-column", authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ error: "Not allowed" });
+    }
+
+    const [results] = await sequelize.query(`
+      SHOW COLUMNS FROM Games LIKE 'price';
+    `);
+
+    if (results.length === 0) {
+      await sequelize.query(`
+        ALTER TABLE Games
+        ADD COLUMN price DECIMAL(10,2) NOT NULL DEFAULT 0;
+      `);
+
+      return res.json({
+        message: "price column added to Games table successfully"
+      });
+    }
+
+    return res.json({
+      message: "price column already exists"
+    });
+
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 function buildFormation(size) {
   if (String(size) === "5") {
     return [
