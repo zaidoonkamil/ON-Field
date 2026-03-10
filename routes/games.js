@@ -128,7 +128,13 @@ router.get("/games", async (req, res) => {
 
     const now = new Date();
 
+    let where = {};
+    if (req.query.formationSize) {
+      where.formationSize = String(req.query.formationSize);
+    }
+
     const { rows: games, count: total } = await Game.findAndCountAll({
+      where,
       order: [["createdAt", "DESC"]],
       limit,
       offset,
@@ -168,8 +174,13 @@ router.get("/games/open", async (req, res) => {
 
     const now = new Date();
 
+    let where = { status: "open" };
+    if (req.query.formationSize) {
+      where.formationSize = String(req.query.formationSize);
+    }
+
     const { rows: games, count: total } = await Game.findAndCountAll({
-      where: { status: "open" },
+      where,
       order: [["createdAt", "DESC"]],
       limit,
       offset,
@@ -209,8 +220,13 @@ router.get("/games/closed", async (req, res) => {
 
     const now = new Date();
 
+    let where = { status: "closed" };
+    if (req.query.formationSize) {
+      where.formationSize = String(req.query.formationSize);
+    }
+
     const { rows: games, count: total } = await Game.findAndCountAll({
-      where: { status: "closed" },
+      where,
       order: [["createdAt", "DESC"]],
       limit,
       offset,
