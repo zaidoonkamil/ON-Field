@@ -31,13 +31,6 @@ const Game = sequelize.define("Game", {
     allowNull: false,
     defaultValue: "open",
   },
-  price: {
-    type: DataTypes.DECIMAL(10, 2),
-    allowNull: true,
-    validate: {
-      min: 0,
-    },
-  },
 }, { timestamps: true });
 
 
