@@ -360,14 +360,17 @@ router.post("/games/:id/book", upload.none(), authenticateToken, async (req, res
       return res.status(404).json({ error: "المستخدم غير موجود بالنظام" });
     }
 
-    const already = await GameSlot.findOne({
-      where: { gameId, userId },
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-    if (already) {
-      await t.rollback();
-      return res.status(409).json({ error: "أنت حاجز مقعد بالفعل بهذه المباراة" });
+    if (req.user.role !== "admin") {
+      const already = await GameSlot.findOne({
+        where: { gameId, userId },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (already) {
+        await t.rollback();
+        return res.status(409).json({ error: "أنت حاجز مقعد بالفعل بهذه المباراة" });
+      }
     }
 
     const slot = await GameSlot.findOne({
