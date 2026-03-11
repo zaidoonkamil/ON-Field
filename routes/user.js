@@ -490,22 +490,33 @@ router.put("/users/:id", uploadImage.array("images", 5), async (req, res) => {
 router.put("/users/reset-stats", async (req, res) => {
   try {
     const where = {};
+
     if (!req.query.includeAdmins) {
-      where.role = { [Op.not]: "admin" };
+      where.role = { [Op.ne]: "admin" };
     }
 
     const [affectedCount] = await User.update(
-      { spd: 50, fin: 50, pas: 50, skl: 50, tkl: 50, str: 50 },
+      {
+        spd: 50,
+        fin: 50,
+        pas: 50,
+        skl: 50,
+        tkl: 50,
+        str: 50,
+      },
       { where }
     );
 
     return res.status(200).json({
-      message: "كل طاقات المستخدمين تم تعيينها إلى 50",
-      affected: affectedCount,
+      message: "تم تعيين جميع الطاقات إلى 50",
+      updatedUsers: affectedCount,
     });
-  } catch (err) {
-    console.error("❌ Error resetting stats:", err);
-    return res.status(500).json({ error: "Internal Server Error" });
+
+  } catch (error) {
+    console.error("❌ Error resetting stats:", error);
+    return res.status(500).json({
+      error: "Internal Server Error",
+    });
   }
 });
 
