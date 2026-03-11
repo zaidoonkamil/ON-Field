@@ -377,6 +377,77 @@ router.get("/profile", async (req, res) => {
   });
 });
 
+router.put("/profile", uploadImage.array("images", 5), async (req, res) => {
+  const token = req.headers.authorization;
+  if (!token) return res.status(401).json({ error: "Token is missing" });
+
+  jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
+    if (err) return res.status(401).json({ error: "Invalid token" });
+
+    try {
+      const user = await User.findByPk(decoded.id);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      let { name, phone, password, position } = req.body;
+
+      if (position && !POSITIONS.includes(position)) {
+        return res.status(400).json({ error: "المركز غير صحيح" });
+      }
+
+      if (phone) {
+        phone = normalizePhone(phone);
+        const exists = await User.findOne({
+          where: { phone, id: { [Op.ne]: user.id } },
+        });
+        if (exists) {
+          return res.status(400).json({ error: "تم استخدام رقم الهاتف من مستخدم اخر" });
+        }
+        user.phone = phone;
+      }
+
+      if (name !== undefined) user.name = name;
+      if (position !== undefined) user.position = position || null;
+
+      if (password) {
+        const hashed = await bcrypt.hash(password, saltRounds);
+        user.password = hashed;
+      }
+
+      const images = req.files && Array.isArray(req.files)
+        ? req.files.map(f => f.filename)
+        : [];
+      if (images.length) {
+        user.image = { main: images[0], images };
+      }
+
+      await user.save();
+
+      const overall = Math.round(
+        (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
+      );
+
+      return res.status(200).json({
+        message: "تم تحديث الملف الشخصي بنجاح",
+        user: {
+          id: user.id,
+          name: user.name,
+          phone: user.phone,
+          role: user.role,
+          position: user.position,
+          stats: { spd: user.spd, fin: user.fin, pas: user.pas, skl: user.skl, tkl: user.tkl, str: user.str },
+          overall,
+          image: user.image,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      });
+    } catch (error) {
+      console.error("❌ Error updating profile:", error);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  });
+});
+
 router.delete("/users/:id", async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id, {
