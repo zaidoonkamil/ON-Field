@@ -18,40 +18,6 @@ const normalizePhone = (phone = "") => {
   return phone;
 };
 
-
-router.put("/users/reset-stats", async (req, res) => {
-  try {
-    const where = {};
-
-    if (!req.query.includeAdmins) {
-      where.role = { [Op.ne]: "admin" };
-    }
-
-    const [affectedCount] = await User.update(
-      {
-        spd: 50,
-        fin: 50,
-        pas: 50,
-        skl: 50,
-        tkl: 50,
-        str: 50,
-      },
-      { where }
-    );
-
-    return res.status(200).json({
-      message: "تم تعيين جميع الطاقات إلى 50",
-      updatedUsers: affectedCount,
-    });
-
-  } catch (error) {
-    console.error("❌ Error resetting stats:", error);
-    return res.status(500).json({
-      error: "Internal Server Error",
-    });
-  }
-});
-
 const clampStat = (v, def = 100) => {
   const n = Number(v);
   if (Number.isNaN(n)) return def;
