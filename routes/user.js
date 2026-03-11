@@ -487,5 +487,17 @@ router.put("/users/:id", uploadImage.array("images", 5), async (req, res) => {
   }
 });
 
+router.put("/users/reset-stats", async (req, res) => {
+  try {
+    await User.update(
+      { spd: 50, fin: 50, pas: 50, skl: 50, tkl: 50, str: 50 },
+      { where: {} }
+    );
+    return res.status(200).json({ message: "كل طاقات اللاعبين تم تعيينها إلى 50" });
+  } catch (err) {
+    console.error("❌ Error resetting stats:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
 module.exports = router;
