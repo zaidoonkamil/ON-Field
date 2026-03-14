@@ -38,7 +38,10 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
     // =======================
     // Validate matchStats
     // =======================
-    if (matchStats !== undefined && (typeof matchStats !== "object" || matchStats === null || Array.isArray(matchStats))) {
+    if (
+      matchStats !== undefined &&
+      (typeof matchStats !== "object" || matchStats === null || Array.isArray(matchStats))
+    ) {
       errors.push("matchStats لازم يكون object");
     }
 
@@ -47,10 +50,10 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
 
     if (matchStats) {
       const intFields = [
-        "offsidesA","offsidesB",
-        "cornersA","cornersB",
-        "bigChancesA","bigChancesB",
-        "shotsA","shotsB",
+        "offsidesA", "offsidesB",
+        "cornersA", "cornersB",
+        "bigChancesA", "bigChancesB",
+        "shotsA", "shotsB",
       ];
 
       for (const f of intFields) {
@@ -59,15 +62,13 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
         }
       }
 
-      // xG floats >= 0
-      const floatFields = ["xgA","xgB"];
+      const floatFields = ["xgA", "xgB"];
       for (const f of floatFields) {
         if (matchStats[f] !== undefined && !isNonNegNumber(matchStats[f])) {
           errors.push(`${f} لازم يكون رقم >= 0`);
         }
       }
 
-      // possession
       const hasPA = matchStats.possessionA !== undefined;
       const hasPB = matchStats.possessionB !== undefined;
 
@@ -82,7 +83,6 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
         errors.push("مجموع possessionA + possessionB لازم يساوي 100");
       }
 
-      // قيم افتراضية/تكملة تلقائية
       if (hasPA) {
         pA = matchStats.possessionA;
         pB = hasPB ? matchStats.possessionB : (100 - pA);
@@ -99,7 +99,6 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
       errors.push("playersStats لازم يكون Array");
     }
 
-    const seenUsers = new Set();
     const validTeams = new Set(["A", "B"]);
 
     if (Array.isArray(playersStats)) {
@@ -113,12 +112,6 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
 
         if (!p.userId || !Number.isInteger(Number(p.userId))) {
           errors.push(`playersStats[${i}].userId مطلوب ولازم يكون رقم صحيح`);
-        } else {
-          const uid = Number(p.userId);
-          if (seenUsers.has(uid)) {
-            errors.push(`playersStats: userId مكرر (${uid})`);
-          }
-          seenUsers.add(uid);
         }
 
         if (!p.team || !validTeams.has(p.team)) {
@@ -137,23 +130,26 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
     // motmUserId validation
     if (motmUserId !== undefined && motmUserId !== null) {
       const motm = Number(motmUserId);
+
       if (!Number.isInteger(motm) || motm <= 0) {
         errors.push("motmUserId لازم يكون رقم صحيح");
       } else if (Array.isArray(playersStats) && playersStats.length > 0) {
-        // لازم يكون ضمن اللاعبين المرسلين
-        if (!seenUsers.has(motm)) {
+        const existsInPlayers = playersStats.some(
+          (p) => Number(p?.userId) === motm
+        );
+
+        if (!existsInPlayers) {
           errors.push("motmUserId لازم يكون ضمن playersStats");
         }
       }
     }
 
-    // إذا اكو أخطاء رجّعها كلها مرة وحدة
     if (errors.length) {
       return res.status(400).json({ error: "Validation failed", details: errors });
     }
 
     // =======================
-    // Save (بعد ما صار كلشي صحيح)
+    // Save
     // =======================
     if (matchStats) {
       await MatchStats.upsert({
