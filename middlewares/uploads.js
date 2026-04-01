@@ -19,15 +19,16 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100000 * 1024 * 1024 },
+  limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const mime = file.mimetype || "";
 
     const isImage = mime.startsWith("image/");
     const isVideo = mime.startsWith("video/");
+    const isAudio = mime.startsWith("audio/");
 
-    if (!isImage && !isVideo) {
-      return cb(new Error("❌ مسموح فقط رفع صور أو فيديوات"), false);
+    if (!isImage && !isVideo && !isAudio) {
+      return cb(new Error("❌ مسموح فقط رفع صور أو فيديوات أو ملفات صوتية"), false);
     }
 
     cb(null, true);

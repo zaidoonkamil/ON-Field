@@ -14,6 +14,7 @@ const notificationsRouter = require("./routes/notifications.js");
 const statsRouter = require("./routes/stats.js");
 const monthlySquadsRouter = require("./routes/monthly_squads.js");
 const chatRouter = require("./routes/chat.js");
+const chatService = require("./services/chatService.js");
 const { setupSocketHandlers } = require("./services/socketService.js");
 const playerOfMonthRoutes = require("./routes/playerOfMonth");
 
@@ -25,6 +26,8 @@ const io = socketIo(server, {
     methods: ["GET", "POST"]
   }
 });
+
+app.set("io", io);
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
@@ -45,8 +48,9 @@ app.use("/", playerOfMonthRoutes);
 setupSocketHandlers(io);
 
 sequelize.sync({ force: false })
-  .then(() => {
+  .then(async () => {
     console.log("✅ Database & tables synced!");
+    await chatService.enforceMessageLimitForAllRooms();
     startCleanupJob();
   }).catch((err) => console.error("❌ Error syncing database:", err));
 
