@@ -356,11 +356,7 @@ class ChatService {
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
     const trimmedQuery = String(query || "").trim();
 
-    const where = {
-      role: {
-        [Op.not]: "admin",
-      },
-    };
+    const where = {};
 
     if (excludeUserId !== undefined && excludeUserId !== null && `${excludeUserId}`.trim() !== "") {
       const normalizedExcludeId = Number(excludeUserId);
