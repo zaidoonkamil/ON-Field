@@ -7,6 +7,7 @@ const cors = require("cors");
 const usersRouter = require("./routes/user");
 const postRouter = require("./routes/Post");
 const { startCleanupJob } = require("./services/cleanupPosts.js");
+const { startGameReminderJob } = require("./services/gameReminders.js");
 const liveRouter = require("./routes/live");
 const gamesRouter = require("./routes/games");
 const resultsRouter = require("./routes/results.js");
@@ -52,6 +53,7 @@ sequelize.sync({ force: false })
     console.log("✅ Database & tables synced!");
     await chatService.enforceMessageLimitForAllRooms();
     startCleanupJob();
+    startGameReminderJob();
   }).catch((err) => console.error("❌ Error syncing database:", err));
 
 
