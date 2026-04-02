@@ -77,6 +77,25 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
   }
 });
 
+// اقتراحات المنشن على مستوى التطبيق بالكامل
+router.get("/api/chat/mentions", async (req, res) => {
+  try {
+    const { q = "", limit = 20, excludeUserId } = req.query;
+    const users = await chatService.searchMentionUsers(q, limit, excludeUserId);
+
+    res.status(200).json({
+      success: true,
+      users,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "خطأ في جلب اقتراحات المنشن",
+      error: error.message,
+    });
+  }
+});
+
 // الحصول على جميع الرسائل
 router.get("/api/chat/messages", async (req, res) => {
   try {

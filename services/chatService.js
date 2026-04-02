@@ -352,6 +352,47 @@ class ChatService {
     }
   }
 
+  async searchMentionUsers(query = "", limit = 20, excludeUserId = null) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
+    const trimmedQuery = String(query || "").trim();
+
+    const where = {
+      role: {
+        [Op.not]: "admin",
+      },
+    };
+
+    if (excludeUserId !== undefined && excludeUserId !== null && `${excludeUserId}`.trim() !== "") {
+      const normalizedExcludeId = Number(excludeUserId);
+      if (Number.isInteger(normalizedExcludeId) && normalizedExcludeId > 0) {
+        where.id = {
+          [Op.ne]: normalizedExcludeId,
+        };
+      }
+    }
+
+    if (trimmedQuery) {
+      where.name = {
+        [Op.like]: `%${trimmedQuery}%`,
+      };
+    }
+
+    const users = await User.findAll({
+      where,
+      attributes: ["id", "name", "image", "position", "role"],
+      order: [["name", "ASC"]],
+      limit: safeLimit,
+    });
+
+    return users.map((user) => ({
+      id: user.id,
+      name: user.name,
+      image: user.image,
+      position: user.position,
+      role: user.role,
+    }));
+  }
+
   async notifyMentionedUsers({ message, sender, io = null, connectedUsersMap = {} }) {
     const mentions = this.normalizeMentions(message.mentions, message.content);
     const senderId = Number(sender?.id ?? message?.userId);
