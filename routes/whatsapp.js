@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const { User } = require("../models");
 const { authenticateToken } = require("../middlewares/auth");
+const jwt = require("jsonwebtoken");
 const {
   getQrCode,
   getStatus,
@@ -10,6 +11,7 @@ const {
   normalizeWhatsAppPhone,
   sendWhatsAppText,
 } = require("../services/waSender");
+const { createOtp, verifyOtp } = require("../services/otpService");
 
 const router = express.Router();
 const upload = multer();
@@ -37,6 +39,82 @@ function ensureAdmin(req, res) {
 
   return true;
 }
+
+function generateToken(user) {
+  return jwt.sign(
+    { id: user.id, phone: user.phone, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: "700d" }
+  );
+}
+
+router.post("/whatsapp/otp/request", upload.none(), async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ error: "phone is required" });
+    }
+
+    const otp = createOtp(phone);
+    const message = `رمز التحقق الخاص بك هو: ${otp.code}\nصالح لمدة ${Math.floor(otp.expiresInSeconds / 60)} دقائق.`;
+
+    await sendWhatsAppText(otp.phone, message);
+
+    return res.status(200).json({
+      success: true,
+      phone: otp.phone,
+      expiresInSeconds: otp.expiresInSeconds,
+      retryAfterSeconds: otp.retryAfterSeconds,
+    });
+  } catch (error) {
+    console.error("WhatsApp OTP request error:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/whatsapp/otp/verify", upload.none(), async (req, res) => {
+  try {
+    const { phone, code } = req.body;
+
+    if (!phone || !code) {
+      return res.status(400).json({ error: "phone and code are required" });
+    }
+
+    const result = verifyOtp(phone, code);
+    const user = await User.findOne({ where: { phone: result.phone } });
+
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        verified: true,
+        phone: result.phone,
+        userExists: false,
+      });
+    }
+
+    const token = generateToken(user);
+
+    return res.status(200).json({
+      success: true,
+      verified: true,
+      phone: result.phone,
+      userExists: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+        position: user.position,
+        image: user.image,
+      },
+    });
+  } catch (error) {
+    console.error("WhatsApp OTP verify error:", error.message);
+    return res.status(400).json({ error: error.message });
+  }
+});
 
 router.post("/whatsapp/init", authenticateToken, async (req, res) => {
   try {
