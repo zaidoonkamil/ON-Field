@@ -15,6 +15,7 @@ const notificationsRouter = require("./routes/notifications.js");
 const statsRouter = require("./routes/stats.js");
 const monthlySquadsRouter = require("./routes/monthly_squads.js");
 const chatRouter = require("./routes/chat.js");
+const whatsappRouter = require("./routes/whatsapp.js");
 const chatService = require("./services/chatService.js");
 const { setupSocketHandlers } = require("./services/socketService.js");
 const playerOfMonthRoutes = require("./routes/playerOfMonth");
@@ -44,6 +45,7 @@ app.use("/", notificationsRouter);
 app.use("/", statsRouter);
 app.use("/", monthlySquadsRouter);
 app.use("/", chatRouter);
+app.use("/", whatsappRouter);
 app.use("/", playerOfMonthRoutes);
 
 setupSocketHandlers(io);
