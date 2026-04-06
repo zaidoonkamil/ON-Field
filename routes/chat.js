@@ -4,7 +4,6 @@ const chatService = require("../services/chatService");
 const upload = require("../middlewares/uploads");
 const { connectedUsers } = require("../services/socketService");
 
-// رفع ملف دردشة (صورة / فيديو / صوت)
 router.post("/api/chat/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -16,7 +15,7 @@ router.post("/api/chat/upload", upload.single("file"), async (req, res) => {
 
     const mediaUrl = `/uploads/${req.file.filename}`;
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "تم رفع الملف بنجاح",
       data: {
@@ -28,7 +27,7 @@ router.post("/api/chat/upload", upload.single("file"), async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "خطأ في رفع ملف الدردشة",
       error: error.message,
@@ -36,10 +35,17 @@ router.post("/api/chat/upload", upload.single("file"), async (req, res) => {
   }
 });
 
-// إرسال رسالة عبر REST مع دعم النص والوسائط والمنشن
 router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
   try {
-    const { userId, content = "", room = "main_chat", mentions, mediaUrl: bodyMediaUrl, mediaType } = req.body;
+    const {
+      userId,
+      content = "",
+      room = "main_chat",
+      mentions,
+      mediaUrl: bodyMediaUrl,
+      mediaType,
+    } = req.body;
+
     const uploadedMediaUrl = req.file ? `/uploads/${req.file.filename}` : (bodyMediaUrl || null);
 
     const message = await chatService.saveMessage({
@@ -56,25 +62,31 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
       io.to(room).emit("receive_message", message);
     }
 
-    await chatService.notifyRoomUsers({
-      message,
-      sender: message.user,
-    });
-
-    await chatService.notifyMentionedUsers({
-      message,
-      sender: message.user,
-      io,
-      connectedUsersMap: connectedUsers,
-    });
-
     res.status(201).json({
       success: true,
       message: "تم إرسال الرسالة بنجاح",
       data: message,
     });
+
+    setImmediate(async () => {
+      try {
+        await chatService.notifyRoomUsers({
+          message,
+          sender: message.user,
+        });
+
+        await chatService.notifyMentionedUsers({
+          message,
+          sender: message.user,
+          io,
+          connectedUsersMap: connectedUsers,
+        });
+      } catch (notificationError) {
+        console.error("Error sending chat notifications:", notificationError);
+      }
+    });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "خطأ في إرسال الرسالة",
       error: error.message,
@@ -82,18 +94,17 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
   }
 });
 
-// اقتراحات المنشن على مستوى التطبيق بالكامل
 router.get("/api/chat/mentions", async (req, res) => {
   try {
     const { q = "", limit = 20, excludeUserId } = req.query;
     const users = await chatService.searchMentionUsers(q, limit, excludeUserId);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       users,
     });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "خطأ في جلب اقتراحات المنشن",
       error: error.message,
@@ -101,18 +112,18 @@ router.get("/api/chat/mentions", async (req, res) => {
   }
 });
 
-// الحصول على جميع الرسائل
 router.get("/api/chat/messages", async (req, res) => {
   try {
     const room = req.query.room || "main_chat";
     const limit = req.query.limit || 50;
     const messages = await chatService.getAllMessages(room, parseInt(limit, 10));
-    res.status(200).json({
+
+    return res.status(200).json({
       success: true,
       messages,
     });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "خطأ في جلب الرسائل",
       error: error.message,
@@ -120,7 +131,6 @@ router.get("/api/chat/messages", async (req, res) => {
   }
 });
 
-// حذف رسالة (للمسؤولين فقط)
 router.delete("/api/chat/messages/:messageId", async (req, res) => {
   try {
     const { messageId } = req.params;
@@ -135,15 +145,17 @@ router.delete("/api/chat/messages/:messageId", async (req, res) => {
 
     const io = req.app.get("io");
     if (io) {
-      io.to(deletedMessage.room || "main_chat").emit("message_deleted", { messageId: Number(messageId) });
+      io.to(deletedMessage.room || "main_chat").emit("message_deleted", {
+        messageId: Number(messageId),
+      });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "تم حذف الرسالة بنجاح",
     });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "خطأ في حذف الرسالة",
       error: error.message,
@@ -151,7 +163,6 @@ router.delete("/api/chat/messages/:messageId", async (req, res) => {
   }
 });
 
-// تحديث رسالة
 router.put("/api/chat/messages/:messageId", async (req, res) => {
   try {
     const { messageId } = req.params;
@@ -163,13 +174,13 @@ router.put("/api/chat/messages/:messageId", async (req, res) => {
       io.to(message.room || "main_chat").emit("message_updated", message);
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "تم تحديث الرسالة بنجاح",
       data: message,
     });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "خطأ في تحديث الرسالة",
       error: error.message,
