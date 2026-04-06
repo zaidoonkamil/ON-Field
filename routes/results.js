@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
-const { Game, GameSlot, User, MatchStats, PlayerMatchStats } = require("../models");
+const { Game, GameSlot, User, MatchStats, PlayerMatchStats, Post } = require("../models");
 const { authenticateToken } = require("../middlewares/auth.js");
 
 const calcOverall = (u) =>
@@ -192,7 +192,15 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
       }
     }
 
+    const wasOpen = game.status === "open";
     await game.update({ status: "closed" });
+    if (wasOpen) {
+      await Post.create({
+        userId: null,
+        text: game.stadiumName || null,
+        media: { images: [], videos: [] },
+      });
+    }
 
     return res.json({ message: "تم حفظ النتائج" });
   } catch (e) {
