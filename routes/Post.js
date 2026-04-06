@@ -36,6 +36,25 @@ async function enforceMaxPosts() {
   }
 }
 
+function parseMediaList(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : [trimmed];
+    } catch (e) {
+      return [trimmed];
+    }
+  }
+
+  return [];
+}
+
 router.post("/posts", uploadPostMedia.array("media", 100), async (req, res) => {
   try {
     const { userId, text } = req.body;
@@ -96,6 +115,65 @@ async function safeDeleteFile(filename) {
   } catch (e) {
   }
 }
+
+router.put("/posts/:id", uploadPostMedia.array("media", 100), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const post = await Post.findByPk(id);
+    if (!post) return res.status(404).json({ error: "Ø§Ù„Ù…Ù†Ø´ÙˆØ± ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯" });
+
+    const currentImages = post.media?.images || [];
+    const currentVideos = post.media?.videos || [];
+
+    const removeImages = parseMediaList(req.body.removeImages);
+    const removeVideos = parseMediaList(req.body.removeVideos);
+
+    const invalidRemoveImage = removeImages.find((name) => !currentImages.includes(name));
+    if (invalidRemoveImage) {
+      return res.status(400).json({ error: "ØµÙˆØ±Ø© Ù…Ø·Ù„ÙˆØ¨Ø© Ù„Ù„Ø­Ø°Ù ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯Ø© Ø¯Ø§Ø®Ù„ Ø§Ù„Ù…Ù†Ø´ÙˆØ±" });
+    }
+
+    const invalidRemoveVideo = removeVideos.find((name) => !currentVideos.includes(name));
+    if (invalidRemoveVideo) {
+      return res.status(400).json({ error: "ÙÙŠØ¯ÙŠÙˆ Ù…Ø·Ù„ÙˆØ¨ Ù„Ù„Ø­Ø°Ù ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯ Ø¯Ø§Ø®Ù„ Ø§Ù„Ù…Ù†Ø´ÙˆØ±" });
+    }
+
+    const newImages = [];
+    const newVideos = [];
+
+    for (const f of req.files || []) {
+      const main = (f.mimetype || "").split("/")[0];
+      if (main === "image") newImages.push(f.filename);
+      else if (main === "video") newVideos.push(f.filename);
+      else return res.status(400).json({ error: "Ù…Ø³Ù…ÙˆØ­ ÙÙ‚Ø· ØµÙˆØ± ÙˆÙÙŠØ¯ÙŠÙˆØ§Øª" });
+    }
+
+    const updatedImages = currentImages
+      .filter((name) => !removeImages.includes(name))
+      .concat(newImages);
+
+    const updatedVideos = currentVideos
+      .filter((name) => !removeVideos.includes(name))
+      .concat(newVideos);
+
+    post.media = {
+      images: updatedImages,
+      videos: updatedVideos,
+    };
+
+    await post.save();
+
+    for (const f of [...removeImages, ...removeVideos]) {
+      await safeDeleteFile(f);
+    }
+
+    return res.status(200).json(post);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
 router.delete("/posts/:id", async (req, res) => {
   try {
