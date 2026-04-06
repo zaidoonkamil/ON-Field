@@ -4,8 +4,6 @@ const uploadPostMedia = require("../middlewares/uploads");
 const { Post } = require("../models");
 const path = require("path");
 const fs = require("fs/promises");
-const multer = require("multer");
-const upload = multer();
 
 const MAX_POSTS = 15;
 
@@ -25,7 +23,6 @@ async function enforceMaxPosts() {
   if (count <= MAX_POSTS) return;
 
   const toDeleteCount = count - MAX_POSTS;
-
   const oldPosts = await Post.findAll({
     order: [["createdAt", "ASC"]],
     limit: toDeleteCount,
@@ -55,18 +52,20 @@ function parseMediaList(value) {
   return [];
 }
 
+async function safeDeleteFile(filename) {
+  try {
+    const filePath = path.join(__dirname, "..", "uploads", filename);
+    await fs.unlink(filePath);
+  } catch (e) {}
+}
+
 router.post("/posts", uploadPostMedia.array("media", 100), async (req, res) => {
   try {
     const { userId, text } = req.body;
-
-    if (!req.files?.length) {
-      return res.status(400).json({ error: "لازم ترفع صور/فيديوات" });
-    }
-
     const images = [];
     const videos = [];
 
-    for (const f of req.files) {
+    for (const f of req.files || []) {
       const main = (f.mimetype || "").split("/")[0];
       if (main === "image") images.push(f.filename);
       else if (main === "video") videos.push(f.filename);
@@ -79,9 +78,7 @@ router.post("/posts", uploadPostMedia.array("media", 100), async (req, res) => {
       media: { images, videos },
     });
 
-    // ✅ بعد الإضافة: طبّق حد 20 واحذف الأقدم
     await enforceMaxPosts();
-
     return res.status(201).json(post);
   } catch (e) {
     console.error(e);
@@ -91,8 +88,8 @@ router.post("/posts", uploadPostMedia.array("media", 100), async (req, res) => {
 
 router.get("/posts", async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 30;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 30;
     const offset = (page - 1) * limit;
 
     const posts = await Post.findAll({
@@ -108,35 +105,29 @@ router.get("/posts", async (req, res) => {
   }
 });
 
-async function safeDeleteFile(filename) {
-  try {
-    const filePath = path.join(__dirname, "..", "uploads", filename);
-    await fs.unlink(filePath);
-  } catch (e) {
-  }
-}
-
 router.put("/posts/:id", uploadPostMedia.array("media", 100), async (req, res) => {
   try {
     const { id } = req.params;
+    const { text } = req.body;
 
     const post = await Post.findByPk(id);
-    if (!post) return res.status(404).json({ error: "Ø§Ù„Ù…Ù†Ø´ÙˆØ± ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯" });
+    if (!post) {
+      return res.status(404).json({ error: "المنشور غير موجود" });
+    }
 
     const currentImages = post.media?.images || [];
     const currentVideos = post.media?.videos || [];
-
     const removeImages = parseMediaList(req.body.removeImages);
     const removeVideos = parseMediaList(req.body.removeVideos);
 
     const invalidRemoveImage = removeImages.find((name) => !currentImages.includes(name));
     if (invalidRemoveImage) {
-      return res.status(400).json({ error: "ØµÙˆØ±Ø© Ù…Ø·Ù„ÙˆØ¨Ø© Ù„Ù„Ø­Ø°Ù ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯Ø© Ø¯Ø§Ø®Ù„ Ø§Ù„Ù…Ù†Ø´ÙˆØ±" });
+      return res.status(400).json({ error: "صورة مطلوبة للحذف غير موجودة داخل المنشور" });
     }
 
     const invalidRemoveVideo = removeVideos.find((name) => !currentVideos.includes(name));
     if (invalidRemoveVideo) {
-      return res.status(400).json({ error: "ÙÙŠØ¯ÙŠÙˆ Ù…Ø·Ù„ÙˆØ¨ Ù„Ù„Ø­Ø°Ù ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯ Ø¯Ø§Ø®Ù„ Ø§Ù„Ù…Ù†Ø´ÙˆØ±" });
+      return res.status(400).json({ error: "فيديو مطلوب للحذف غير موجود داخل المنشور" });
     }
 
     const newImages = [];
@@ -146,21 +137,17 @@ router.put("/posts/:id", uploadPostMedia.array("media", 100), async (req, res) =
       const main = (f.mimetype || "").split("/")[0];
       if (main === "image") newImages.push(f.filename);
       else if (main === "video") newVideos.push(f.filename);
-      else return res.status(400).json({ error: "Ù…Ø³Ù…ÙˆØ­ ÙÙ‚Ø· ØµÙˆØ± ÙˆÙÙŠØ¯ÙŠÙˆØ§Øª" });
+      else return res.status(400).json({ error: "مسموح فقط صور وفيديوات" });
     }
 
-    const updatedImages = currentImages
-      .filter((name) => !removeImages.includes(name))
-      .concat(newImages);
-
-    const updatedVideos = currentVideos
-      .filter((name) => !removeVideos.includes(name))
-      .concat(newVideos);
-
     post.media = {
-      images: updatedImages,
-      videos: updatedVideos,
+      images: currentImages.filter((name) => !removeImages.includes(name)).concat(newImages),
+      videos: currentVideos.filter((name) => !removeVideos.includes(name)).concat(newVideos),
     };
+
+    if (text !== undefined) {
+      post.text = text;
+    }
 
     await post.save();
 
@@ -180,7 +167,9 @@ router.delete("/posts/:id", async (req, res) => {
     const { id } = req.params;
 
     const post = await Post.findByPk(id);
-    if (!post) return res.status(404).json({ error: "المنشور غير موجود" });
+    if (!post) {
+      return res.status(404).json({ error: "المنشور غير موجود" });
+    }
 
     const images = post.media?.images || [];
     const videos = post.media?.videos || [];
@@ -196,6 +185,5 @@ router.delete("/posts/:id", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
 
 module.exports = router;
