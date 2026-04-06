@@ -16,6 +16,11 @@ const UserDevice = sequelize.define("UserDevice", {
         type: DataTypes.INTEGER,
         allowNull: false,
     },
+    chat_notifications_enabled: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: true,
+    },
 }, {
     timestamps: true,
     tableName: "user_devices"

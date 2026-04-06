@@ -7,7 +7,15 @@ const axios = require('axios');
 const { User, UserDevice } = require('../models'); 
 const NotificationLog = require("../models/notification_log");
 const { Op } = require("sequelize");
-const { sendNotificationToAll,  sendNotificationToRole, sendNotificationToUser} = require('../services/notifications');
+const { authenticateToken } = require("../middlewares/auth");
+const {
+  ensureUserDeviceSchema,
+  sendNotificationToAll,
+  sendNotificationToRole,
+  sendNotificationToUser,
+  getUserChatNotificationSetting,
+  updateUserChatNotificationSetting,
+} = require('../services/notifications');
 
 router.post("/notification/user", upload.none(), async (req, res) => {
   try {
@@ -34,20 +42,39 @@ router.post("/notification/user", upload.none(), async (req, res) => {
 });
 
 router.post("/register-device", async (req, res) => {
-  const { user_id, player_id } = req.body;
+  const { user_id, player_id, chat_notifications_enabled } = req.body;
 
   if (!user_id || !player_id) {
     return res.status(400).json({ error: "user_id و player_id مطلوبان" });
   }
 
   try {
+    await ensureUserDeviceSchema();
+
+    const existingUserDevice = await UserDevice.findOne({
+      where: { user_id },
+      order: [["createdAt", "DESC"]],
+    });
+
+    const normalizedChatNotificationsEnabled =
+      chat_notifications_enabled === undefined
+        ? existingUserDevice
+          ? Boolean(existingUserDevice.chat_notifications_enabled)
+          : true
+        : String(chat_notifications_enabled).toLowerCase() === "true";
+
     let device = await UserDevice.findOne({ where: { player_id } });
 
     if (device) {
       device.user_id = user_id;
+      device.chat_notifications_enabled = normalizedChatNotificationsEnabled;
       await device.save();
     } else {
-      await UserDevice.create({ user_id, player_id });
+      await UserDevice.create({
+        user_id,
+        player_id,
+        chat_notifications_enabled: normalizedChatNotificationsEnabled,
+      });
     }
 
     res.json({ success: true, message: "تم تسجيل الجهاز بنجاح" });
@@ -83,6 +110,41 @@ router.post("/notification", upload.none(), async (req, res) => {
   } catch (err) {
     console.error("❌ Error sending notification:", err);
     res.status(500).json({ error: "خطأ في السيرفر", details: err.message });
+  }
+});
+
+router.get("/chat/notifications/settings", authenticateToken, async (req, res) => {
+  try {
+    const chatNotificationsEnabled = await getUserChatNotificationSetting(req.user.id);
+
+    return res.status(200).json({
+      success: true,
+      chatNotificationsEnabled,
+    });
+  } catch (error) {
+    console.error("Error fetching chat notification settings:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.put("/chat/notifications/settings", authenticateToken, upload.none(), async (req, res) => {
+  try {
+    const { chatNotificationsEnabled } = req.body;
+
+    if (chatNotificationsEnabled === undefined) {
+      return res.status(400).json({ error: "chatNotificationsEnabled مطلوب" });
+    }
+
+    const normalizedEnabled = String(chatNotificationsEnabled).toLowerCase() === "true";
+    const result = await updateUserChatNotificationSetting(req.user.id, normalizedEnabled);
+
+    return res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    console.error("Error updating chat notification settings:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 

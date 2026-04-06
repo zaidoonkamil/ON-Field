@@ -3,7 +3,7 @@ const path = require("path");
 const { DataTypes, Op } = require("sequelize");
 const sequelize = require("../config/db");
 const { Message, User } = require("../models");
-const { sendNotificationToUser } = require("./notifications");
+const { sendNotificationToUser, sendChatNotificationToAllExcept } = require("./notifications");
 
 const MAX_MESSAGES_PER_ROOM = 100;
 const uploadsDirectory = path.resolve(__dirname, "..", "uploads");
@@ -457,6 +457,57 @@ class ChatService {
   }
 
   // حذف رسالة
+  async getMentionedUserIds({ message, sender }) {
+    const mentions = this.normalizeMentions(message.mentions, message.content);
+    const senderId = Number(sender?.id ?? message?.userId);
+
+    const directMentionIds = mentions
+      .map((item) => Number(item.userId))
+      .filter((id) => Number.isInteger(id) && id > 0 && id !== senderId);
+
+    const mentionNames = mentions
+      .filter((item) => !item.userId && item.name)
+      .map((item) => String(item.name).trim())
+      .filter(Boolean);
+
+    let resolvedMentionIds = [];
+    if (mentionNames.length) {
+      const mentionedUsers = await User.findAll({
+        where: {
+          name: {
+            [Op.in]: mentionNames,
+          },
+        },
+        attributes: ["id"],
+      });
+
+      resolvedMentionIds = mentionedUsers
+        .map((user) => Number(user.id))
+        .filter((id) => Number.isInteger(id) && id > 0 && id !== senderId);
+    }
+
+    return [...new Set([...directMentionIds, ...resolvedMentionIds])];
+  }
+
+  async notifyRoomUsers({ message, sender }) {
+    const senderId = Number(sender?.id ?? message?.userId);
+    if (!Number.isInteger(senderId) || senderId <= 0) {
+      return;
+    }
+
+    const payload = this.formatMessage(message);
+    const preview = this.getMessagePreview(payload);
+    const mentionedUserIds = await this.getMentionedUserIds({ message: payload, sender });
+    const senderName = sender?.name || "أحد المستخدمين";
+
+    await sendChatNotificationToAllExcept({
+      senderUserId: senderId,
+      excludedUserIds: mentionedUserIds,
+      title: "رسالة جديدة في الدردشة",
+      message: `${senderName}: ${preview}`,
+    });
+  }
+
   async deleteMessage(messageId) {
     try {
       await this.ensureMessageSchema();

@@ -56,6 +56,11 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
       io.to(room).emit("receive_message", message);
     }
 
+    await chatService.notifyRoomUsers({
+      message,
+      sender: message.user,
+    });
+
     await chatService.notifyMentionedUsers({
       message,
       sender: message.user,

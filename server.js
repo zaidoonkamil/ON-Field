@@ -17,6 +17,7 @@ const monthlySquadsRouter = require("./routes/monthly_squads.js");
 const chatRouter = require("./routes/chat.js");
 const whatsappRouter = require("./routes/whatsapp.js");
 const chatService = require("./services/chatService.js");
+const { ensureUserDeviceSchema } = require("./services/notifications.js");
 const { setupSocketHandlers } = require("./services/socketService.js");
 const playerOfMonthRoutes = require("./routes/playerOfMonth");
 
@@ -53,6 +54,7 @@ setupSocketHandlers(io);
 sequelize.sync({ force: false })
   .then(async () => {
     console.log("✅ Database & tables synced!");
+    await ensureUserDeviceSchema();
     await chatService.enforceMessageLimitForAllRooms();
     startCleanupJob();
     startGameReminderJob();

@@ -83,6 +83,11 @@ const setupSocketHandlers = (io) => {
 
         io.to(room).emit("receive_message", savedMessage);
 
+        await chatService.notifyRoomUsers({
+          message: savedMessage,
+          sender: savedMessage.user,
+        });
+
         await chatService.notifyMentionedUsers({
           message: savedMessage,
           sender: savedMessage.user,
