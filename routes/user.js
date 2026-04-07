@@ -194,6 +194,10 @@ router.post("/login", upload.none(), async (req, res) => {
       return res.status(400).json({ error: "Invalid phone number" });
     }
 
+    if (!user.isActive) {
+      return res.status(403).json({ error: "This account has been deactivated" });
+    }
+
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) {
       return res.status(400).json({ error: "Invalid password" });

@@ -34,6 +34,11 @@ const User = sequelize.define("User", {
         allowNull: false,
         defaultValue: "user",
     },
+    isActive: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: true,
+    },
     governorateId: {
         type: DataTypes.INTEGER,
         allowNull: true,

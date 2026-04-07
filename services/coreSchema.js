@@ -60,6 +60,11 @@ async function ensureCoreSchema() {
 
       const usersTable = User.getTableName();
       await ensureUserRoleEnum(queryInterface, usersTable);
+      await ensureColumn(queryInterface, usersTable, "isActive", {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: true,
+      });
       await ensureColumn(queryInterface, usersTable, "governorateId", {
         type: DataTypes.INTEGER,
         allowNull: true,
@@ -89,6 +94,15 @@ async function ensureCoreSchema() {
         {
           where: {
             governorateId: null,
+          },
+        }
+      );
+
+      await User.update(
+        { isActive: true },
+        {
+          where: {
+            isActive: null,
           },
         }
       );

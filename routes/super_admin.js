@@ -44,6 +44,7 @@ function mapAdmin(user) {
     name: user.name,
     phone: user.phone,
     role: user.role,
+    isActive: user.isActive,
     governorateId: user.governorateId,
     governorate: user.governorate
       ? mapGovernorate(user.governorate)
@@ -310,6 +311,7 @@ router.post("/super-admin/admins", authenticateToken, requireRoles("super_admin"
       phone,
       password: hashedPassword,
       role,
+      isActive: true,
       position: position || null,
       governorateId: governorate.id,
       image: null,
@@ -328,6 +330,105 @@ router.post("/super-admin/admins", authenticateToken, requireRoles("super_admin"
     return res.status(201).json(mapAdmin(adminWithGovernorate));
   } catch (error) {
     console.error("Error creating admin:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.put("/super-admin/admins/:id", authenticateToken, requireRoles("super_admin"), async (req, res) => {
+  try {
+    const admin = await User.findByPk(req.params.id, {
+      include: [{ model: Governorate, as: "governorate" }],
+    });
+
+    if (!admin || !ADMIN_ROLES.includes(admin.role)) {
+      return res.status(404).json({ error: "Admin not found" });
+    }
+
+    if (Number(admin.id) === Number(req.user.id) && req.body.isActive === false) {
+      return res.status(400).json({ error: "You cannot deactivate your own account" });
+    }
+
+    let { name, phone, password, governorateId, role, isActive } = req.body;
+
+    if (name !== undefined) {
+      admin.name = String(name).trim();
+    }
+
+    if (phone !== undefined) {
+      phone = normalizePhone(phone);
+      const existingPhone = await User.findOne({
+        where: {
+          phone,
+          id: { [Op.ne]: admin.id },
+        },
+      });
+
+      if (existingPhone) {
+        return res.status(409).json({ error: "Phone already exists" });
+      }
+
+      admin.phone = phone;
+    }
+
+    if (password !== undefined && String(password).trim()) {
+      admin.password = await bcrypt.hash(String(password).trim(), saltRounds);
+    }
+
+    if (role !== undefined) {
+      admin.role = role === "super_admin" ? "super_admin" : "admin";
+    }
+
+    if (isActive !== undefined) {
+      admin.isActive = Boolean(isActive);
+    }
+
+    if (governorateId !== undefined) {
+      const governorate = await Governorate.findByPk(Number(governorateId));
+      if (!governorate) {
+        return res.status(404).json({ error: "Governorate not found" });
+      }
+      admin.governorateId = governorate.id;
+    }
+
+    await admin.save();
+
+    const updatedAdmin = await User.findByPk(admin.id, {
+      include: [{ model: Governorate, as: "governorate" }],
+      attributes: { exclude: ["password"] },
+    });
+
+    return res.status(200).json(mapAdmin(updatedAdmin));
+  } catch (error) {
+    console.error("Error updating admin:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.patch("/super-admin/admins/:id/status", authenticateToken, requireRoles("super_admin"), async (req, res) => {
+  try {
+    const admin = await User.findByPk(req.params.id, {
+      include: [{ model: Governorate, as: "governorate" }],
+      attributes: { exclude: ["password"] },
+    });
+
+    if (!admin || !ADMIN_ROLES.includes(admin.role)) {
+      return res.status(404).json({ error: "Admin not found" });
+    }
+
+    if (Number(admin.id) === Number(req.user.id)) {
+      return res.status(400).json({ error: "You cannot change your own status" });
+    }
+
+    if (req.body.isActive === undefined) {
+      return res.status(400).json({ error: "isActive is required" });
+    }
+
+    admin.isActive = Boolean(req.body.isActive);
+    await admin.save();
+
+    return res.status(200).json(mapAdmin(admin));
+  } catch (error) {
+    console.error("Error updating admin status:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
