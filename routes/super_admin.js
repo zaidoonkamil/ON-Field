@@ -151,6 +151,60 @@ router.get("/super-admin/admins", authenticateToken, requireRoles("super_admin")
   }
 });
 
+
+router.post("/create-super-admin", async (req, res) => {
+  try {
+    const { name, password, position } = req.body;
+    let { phone, governorateId, role } = req.body;
+
+    phone = normalizePhone(phone);
+
+    // نخلي role افتراضياً super_admin
+    role = role === "super_admin" ? "super_admin" : "admin";
+
+    if (!name || !phone || !password || !governorateId) {
+      return res.status(400).json({
+        error: "name, phone, password, governorateId are required",
+      });
+    }
+
+    if (position && !POSITIONS.includes(position)) {
+      return res.status(400).json({ error: "Invalid position" });
+    }
+
+    const governorate = await Governorate.findByPk(Number(governorateId));
+    if (!governorate) {
+      return res.status(404).json({ error: "Governorate not found" });
+    }
+
+    const existingPhone = await User.findOne({ where: { phone } });
+    if (existingPhone) {
+      return res.status(409).json({ error: "Phone already exists" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    const admin = await User.create({
+      name,
+      phone,
+      password: hashedPassword,
+      role,
+      isActive: true,
+      position: position || null,
+      governorateId: governorate.id,
+      image: null,
+    });
+
+    return res.status(201).json({
+      message: "Super admin created successfully",
+      admin,
+    });
+  } catch (error) {
+    console.error("Error creating admin:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 router.get("/super-admin/stats", authenticateToken, requireRoles("super_admin"), async (req, res) => {
   try {
     const [
