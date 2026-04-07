@@ -24,6 +24,10 @@ const MonthlySquad = sequelize.define("MonthlySquad", {
     type: DataTypes.INTEGER,
     allowNull: true,
   },
+  governorateId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
 }, { timestamps: true });
 
 module.exports = MonthlySquad;

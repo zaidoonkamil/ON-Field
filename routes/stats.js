@@ -3,6 +3,11 @@ const router = express.Router();
 const { Op } = require("sequelize");
 const { User, PlayerMatchStats, Game } = require("../models");
 const { fn, col, where } = require("sequelize");
+const { optionalAuthenticateToken } = require("../middlewares/auth");
+const {
+  getGovernorateScope,
+  applyGovernorateScope,
+} = require("../services/accessScope");
 
 const escapeLike = (s) => String(s).replace(/[\\%_]/g, "\\$&");
 
@@ -31,7 +36,7 @@ const safeImage = (img) => {
 const safePosition = (p) => safeString(p, ""); 
 
 
-router.get("/players/stats", async (req, res) => {
+router.get("/players/stats", optionalAuthenticateToken, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
@@ -42,9 +47,17 @@ router.get("/players/stats", async (req, res) => {
     
     const searchRaw = safeString(req.query.search, "").trim();
 
-    const userWhere = {
-      role: { [Op.ne]: "admin" },
-    };
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
+
+    const userWhere = applyGovernorateScope(
+      {
+        role: { [Op.notIn]: ["admin", "super_admin"] },
+      },
+      governorateScope
+    );
 
     if (searchRaw) {
       const search = escapeLike(searchRaw);
@@ -148,7 +161,7 @@ router.get("/players/stats", async (req, res) => {
   }
 });
 
-router.get("/players/leaderboard", async (req, res) => {
+router.get("/players/leaderboard", optionalAuthenticateToken, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
@@ -163,7 +176,15 @@ router.get("/players/leaderboard", async (req, res) => {
 
     const searchRaw = safeString(req.query.search, "").trim();
 
-    const userWhere = { role: { [Op.ne]: "admin" } };
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
+
+    const userWhere = applyGovernorateScope(
+      { role: { [Op.notIn]: ["admin", "super_admin"] } },
+      governorateScope
+    );
 
     if (searchRaw) {
       const search = escapeLike(searchRaw);

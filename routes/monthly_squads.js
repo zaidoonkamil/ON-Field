@@ -2,91 +2,104 @@ const express = require("express");
 const router = express.Router();
 const sequelize = require("../config/db");
 const upload = require("../middlewares/uploads");
-const { authenticateToken } = require("../middlewares/auth.js");
-const { User, MonthlySquad, MonthlySquadSlot, PlayerMatchStats, Game  } = require("../models");
+const { authenticateToken, optionalAuthenticateToken } = require("../middlewares/auth.js");
+const {
+  User,
+  MonthlySquad,
+  MonthlySquadSlot,
+  PlayerMatchStats,
+  Game,
+} = require("../models");
 const { Op } = require("sequelize");
+const {
+  isAdmin,
+  isSuperAdmin,
+  getGovernorateScope,
+  applyGovernorateScope,
+  ensureGovernorateAccess,
+} = require("../services/accessScope");
 
 function buildFormation(size) {
   if (String(size) === "5") {
     return [
-      { code: "GK", label: "GK حارس", role: "player" },
-      { code: "LB", label: "CM مدافع أيسر", role: "player" },
-      { code: "CB", label: "CB مدافع", role: "player" },
-      { code: "RB", label: "CB مدافع أيمن", role: "player" },
-      { code: "CM", label: "CM وسط", role: "player" },
-      { code: "CF", label: "CF رأس حربة", role: "player" },
-      { code: "BENCH1", label: "احتياط 1", role: "bench" },
-      { code: "BENCH2", label: "احتياط 2", role: "bench" },
-      { code: "COACH", label: "مدرب", role: "coach" },
+      { code: "GK", label: "GK Ø­Ø§Ø±Ø³", role: "player" },
+      { code: "LB", label: "CM Ù…Ø¯Ø§ÙØ¹ Ø£ÙŠØ³Ø±", role: "player" },
+      { code: "CB", label: "CB Ù…Ø¯Ø§ÙØ¹", role: "player" },
+      { code: "RB", label: "CB Ù…Ø¯Ø§ÙØ¹ Ø£ÙŠÙ…Ù†", role: "player" },
+      { code: "CM", label: "CM ÙˆØ³Ø·", role: "player" },
+      { code: "CF", label: "CF Ø±Ø£Ø³ Ø­Ø±Ø¨Ø©", role: "player" },
+      { code: "BENCH1", label: "Ø§Ø­ØªÙŠØ§Ø· 1", role: "bench" },
+      { code: "BENCH2", label: "Ø§Ø­ØªÙŠØ§Ø· 2", role: "bench" },
+      { code: "COACH", label: "Ù…Ø¯Ø±Ø¨", role: "coach" },
     ];
   }
   if (String(size) === "7") {
     return [
-      { code: "GK", label: "GK حارس", role: "player" },
-      { code: "LB", label: "LB مدافع أيسر", role: "player" },
-      { code: "CB", label: "CB مدافع", role: "player" },
-      { code: "RB", label: "RB مدافع أيمن", role: "player" },
-      { code: "CM1", label: "CM وسط 1", role: "player" },
-      { code: "CM2", label: "CM وسط 2", role: "player" },
-      { code: "AMF", label: "AMF صانع لعب", role: "player" },
-      { code: "CF", label: "CF رأس حربة", role: "player" },
-      { code: "BENCH1", label: "احتياط 1", role: "bench" },
-      { code: "BENCH2", label: "احتياط 2", role: "bench" },
-      { code: "COACH", label: "مدرب", role: "coach" },
+      { code: "GK", label: "GK Ø­Ø§Ø±Ø³", role: "player" },
+      { code: "LB", label: "LB Ù…Ø¯Ø§ÙØ¹ Ø£ÙŠØ³Ø±", role: "player" },
+      { code: "CB", label: "CB Ù…Ø¯Ø§ÙØ¹", role: "player" },
+      { code: "RB", label: "RB Ù…Ø¯Ø§ÙØ¹ Ø£ÙŠÙ…Ù†", role: "player" },
+      { code: "CM1", label: "CM ÙˆØ³Ø· 1", role: "player" },
+      { code: "CM2", label: "CM ÙˆØ³Ø· 2", role: "player" },
+      { code: "AMF", label: "AMF ØµØ§Ù†Ø¹ Ù„Ø¹Ø¨", role: "player" },
+      { code: "CF", label: "CF Ø±Ø£Ø³ Ø­Ø±Ø¨Ø©", role: "player" },
+      { code: "BENCH1", label: "Ø§Ø­ØªÙŠØ§Ø· 1", role: "bench" },
+      { code: "BENCH2", label: "Ø§Ø­ØªÙŠØ§Ø· 2", role: "bench" },
+      { code: "COACH", label: "Ù…Ø¯Ø±Ø¨", role: "coach" },
     ];
   }
   return [
-    { code: "GK", label: "GK حارس", role: "player" },
-    { code: "LB", label: "LB مدافع أيسر", role: "player" },
-    { code: "CB1", label: "CB مدافع 1", role: "player" },
-    { code: "CB2", label: "CB مدافع 2", role: "player" },
-    { code: "RB", label: "RB مدافع أيمن", role: "player" },
-    { code: "CM1", label: "CM وسط 1", role: "player" },
-    { code: "CM2", label: "CM وسط 2", role: "player" },
-    { code: "AMF", label: "AMF صانع لعب", role: "player" },
-    { code: "LWF", label: "LWF مهاجم أيسر", role: "player" },
-    { code: "RWF", label: "RWF مهاجم أيمن", role: "player" },
-    { code: "CF", label: "CF رأس حربة", role: "player" },
-    { code: "BENCH1", label: "احتياط 1", role: "bench" },
-    { code: "BENCH2", label: "احتياط 2", role: "bench" },
-    { code: "COACH", label: "مدرب", role: "coach" },
+    { code: "GK", label: "GK Ø­Ø§Ø±Ø³", role: "player" },
+    { code: "LB", label: "LB Ù…Ø¯Ø§ÙØ¹ Ø£ÙŠØ³Ø±", role: "player" },
+    { code: "CB1", label: "CB Ù…Ø¯Ø§ÙØ¹ 1", role: "player" },
+    { code: "CB2", label: "CB Ù…Ø¯Ø§ÙØ¹ 2", role: "player" },
+    { code: "RB", label: "RB Ù…Ø¯Ø§ÙØ¹ Ø£ÙŠÙ…Ù†", role: "player" },
+    { code: "CM1", label: "CM ÙˆØ³Ø· 1", role: "player" },
+    { code: "CM2", label: "CM ÙˆØ³Ø· 2", role: "player" },
+    { code: "AMF", label: "AMF ØµØ§Ù†Ø¹ Ù„Ø¹Ø¨", role: "player" },
+    { code: "LWF", label: "LWF Ù…Ù‡Ø§Ø¬Ù… Ø£ÙŠØ³Ø±", role: "player" },
+    { code: "RWF", label: "RWF Ù…Ù‡Ø§Ø¬Ù… Ø£ÙŠÙ…Ù†", role: "player" },
+    { code: "CF", label: "CF Ø±Ø£Ø³ Ø­Ø±Ø¨Ø©", role: "player" },
+    { code: "BENCH1", label: "Ø§Ø­ØªÙŠØ§Ø· 1", role: "bench" },
+    { code: "BENCH2", label: "Ø§Ø­ØªÙŠØ§Ø· 2", role: "bench" },
+    { code: "COACH", label: "Ù…Ø¯Ø±Ø¨", role: "coach" },
   ];
 }
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
-const isAdmin = (req) => req.user?.role === "admin";
-
 router.post("/monthly-squads", upload.none(), authenticateToken, async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    if (!isAdmin(req)) {
+    if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
       await t.rollback();
       return res.status(403).json({ error: "Not allowed" });
     }
 
     const { title, formationSize, status } = req.body;
-
     if (!title || !formationSize) {
       await t.rollback();
-      return res.status(400).json({ error: "title و formationSize مطلوبات" });
+      return res.status(400).json({ error: "title and formationSize are required" });
     }
 
-    const squad = await MonthlySquad.create({
-      title: String(title).trim(),
-      formationSize: String(formationSize),
-      status: status ? String(status) : "draft",
-      createdBy: req.user.id,
-    }, { transaction: t });
+    const squad = await MonthlySquad.create(
+      {
+        title: String(title).trim(),
+        formationSize: String(formationSize),
+        status: status ? String(status) : "draft",
+        createdBy: req.user.id,
+        governorateId: req.user.governorateId || null,
+      },
+      { transaction: t }
+    );
 
-    const slots = buildFormation(formationSize).map(s => ({
+    const slots = buildFormation(formationSize).map((s) => ({
       squadId: squad.id,
       ...s,
     }));
 
     await MonthlySquadSlot.bulkCreate(slots, { transaction: t });
-
     await t.commit();
     return res.status(201).json({ message: "Monthly squad created", squadId: squad.id });
   } catch (e) {
@@ -96,13 +109,19 @@ router.post("/monthly-squads", upload.none(), authenticateToken, async (req, res
   }
 });
 
-router.get("/monthly-squads", async (req, res) => {
+router.get("/monthly-squads", optionalAuthenticateToken, async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || "15", 10), 1), 50);
     const offset = (page - 1) * limit;
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
 
     const { rows, count } = await MonthlySquad.findAndCountAll({
+      where: applyGovernorateScope({}, governorateScope),
       order: [["createdAt", "DESC"]],
       limit,
       offset,
@@ -125,16 +144,26 @@ router.get("/monthly-squads", async (req, res) => {
   }
 });
 
-router.get("/monthly-squads/:id", async (req, res) => {
+router.get("/monthly-squads/:id", optionalAuthenticateToken, async (req, res) => {
   try {
     const squadId = Number(req.params.id);
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
 
     const squad = await MonthlySquad.findByPk(squadId);
-    if (!squad) return res.status(404).json({ error: "التشكيلة غير موجودة" });
+    if (!squad) return res.status(404).json({ error: "Squad not found" });
+    if (
+      governorateScope !== null &&
+      Number(squad.governorateId) !== Number(governorateScope)
+    ) {
+      return res.status(404).json({ error: "Squad not found" });
+    }
 
     const from = req.query.from;
     const to = req.query.to;
-
     const gameWhere = {};
     if (from || to) {
       gameWhere.date = {};
@@ -155,20 +184,21 @@ router.get("/monthly-squads/:id", async (req, res) => {
               as: "stats",
               required: false,
               attributes: ["gameId", "team", "goals", "assists", "yellowCards", "redCards", "isMotm"],
-              include: (from || to)
-                ? [{
-                    model: Game,
-                    as: "game",
-                    where: gameWhere,
-                    required: true,
-                    attributes: ["id", "status", "startsAt"],
-                  }]
-                : [{
-                    model: Game,
-                    as: "game",
-                    required: false,
-                    attributes: ["id", "status", "startsAt"],
-                  }],
+              include:
+                from || to
+                  ? [{
+                      model: Game,
+                      as: "game",
+                      where: gameWhere,
+                      required: true,
+                      attributes: ["id", "status", "startsAt"],
+                    }]
+                  : [{
+                      model: Game,
+                      as: "game",
+                      required: false,
+                      attributes: ["id", "status", "startsAt"],
+                    }],
             },
           ],
         },
@@ -178,15 +208,12 @@ router.get("/monthly-squads/:id", async (req, res) => {
 
     const mapped = slots.map((s) => {
       const j = s.toJSON();
-
       if (j.user) {
         j.user.overall = calcOverall(j.user);
-
         const statsRows = Array.isArray(j.user.stats) ? j.user.stats : [];
         const totals = statsRows.reduce(
           (acc, r) => {
             if (!r.gameId) return acc;
-
             acc.games += 1;
             acc.goals += Number(r.goals) || 0;
             acc.assists += Number(r.assists) || 0;
@@ -197,20 +224,15 @@ router.get("/monthly-squads/:id", async (req, res) => {
           },
           { games: 0, goals: 0, assists: 0, yellowCards: 0, redCards: 0, motm: 0 }
         );
-
         totals.totalCards = totals.yellowCards + totals.redCards;
         j.user.statsTotals = totals;
-
       }
-
       return j;
     });
 
     return res.json({ squad, slots: mapped });
   } catch (e) {
-    console.error("❌ monthly-squads/:id error:", e?.message);
-    console.error(e?.stack);
-    console.error("Sequelize:", e?.parent || e?.original || e);
+    console.error("monthly-squads/:id error:", e?.message);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
@@ -218,17 +240,28 @@ router.get("/monthly-squads/:id", async (req, res) => {
 router.post("/monthly-squads/:id/assign", upload.none(), authenticateToken, async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    if (!isAdmin(req)) {
+    if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
       await t.rollback();
       return res.status(403).json({ error: "Not allowed" });
     }
 
     const squadId = Number(req.params.id);
     const { code, userId } = req.body;
-
     if (!code || !userId) {
       await t.rollback();
-      return res.status(400).json({ error: "code و userId مطلوبات" });
+      return res.status(400).json({ error: "code and userId are required" });
+    }
+
+    const squad = await MonthlySquad.findByPk(squadId, { transaction: t });
+    if (squad && !ensureGovernorateAccess(req, res, squad.governorateId)) {
+      await t.rollback();
+      return;
+    }
+
+    const user = await User.findByPk(Number(userId), { transaction: t });
+    if (!user || Number(user.governorateId) !== Number(squad.governorateId)) {
+      await t.rollback();
+      return res.status(403).json({ error: "Not allowed for this governorate" });
     }
 
     const slot = await MonthlySquadSlot.findOne({
@@ -239,7 +272,7 @@ router.post("/monthly-squads/:id/assign", upload.none(), authenticateToken, asyn
 
     if (!slot) {
       await t.rollback();
-      return res.status(404).json({ error: "المركز غير موجود" });
+      return res.status(404).json({ error: "Position not found" });
     }
 
     const already = await MonthlySquadSlot.findOne({
@@ -249,7 +282,7 @@ router.post("/monthly-squads/:id/assign", upload.none(), authenticateToken, asyn
     });
     if (already) {
       await t.rollback();
-      return res.status(409).json({ error: "هذا اللاعب موجود بالتشكيلة بالفعل" });
+      return res.status(409).json({ error: "Player already exists in this squad" });
     }
 
     slot.userId = Number(userId);
@@ -257,7 +290,7 @@ router.post("/monthly-squads/:id/assign", upload.none(), authenticateToken, asyn
     await slot.save({ transaction: t });
 
     await t.commit();
-    return res.json({ message: "تم تعيين اللاعب", slot });
+    return res.json({ message: "Player assigned", slot });
   } catch (e) {
     await t.rollback();
     console.error(e);
@@ -268,17 +301,22 @@ router.post("/monthly-squads/:id/assign", upload.none(), authenticateToken, asyn
 router.post("/monthly-squads/:id/unassign", upload.none(), authenticateToken, async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    if (!isAdmin(req)) {
+    if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
       await t.rollback();
       return res.status(403).json({ error: "Not allowed" });
     }
 
     const squadId = Number(req.params.id);
     const { code } = req.body;
-
     if (!code) {
       await t.rollback();
-      return res.status(400).json({ error: "code مطلوب" });
+      return res.status(400).json({ error: "code is required" });
+    }
+
+    const squad = await MonthlySquad.findByPk(squadId, { transaction: t });
+    if (squad && !ensureGovernorateAccess(req, res, squad.governorateId)) {
+      await t.rollback();
+      return;
     }
 
     const slot = await MonthlySquadSlot.findOne({
@@ -289,7 +327,7 @@ router.post("/monthly-squads/:id/unassign", upload.none(), authenticateToken, as
 
     if (!slot) {
       await t.rollback();
-      return res.status(404).json({ error: "المركز غير موجود" });
+      return res.status(404).json({ error: "Position not found" });
     }
 
     slot.userId = null;
@@ -297,7 +335,7 @@ router.post("/monthly-squads/:id/unassign", upload.none(), authenticateToken, as
     await slot.save({ transaction: t });
 
     await t.commit();
-    return res.json({ message: "تم إزالة اللاعب من المركز" });
+    return res.json({ message: "Player removed from position" });
   } catch (e) {
     await t.rollback();
     console.error(e);
@@ -308,17 +346,20 @@ router.post("/monthly-squads/:id/unassign", upload.none(), authenticateToken, as
 router.delete("/monthly-squads/:id", authenticateToken, async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    if (!isAdmin(req)) {
+    if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
       await t.rollback();
       return res.status(403).json({ error: "Not allowed" });
     }
 
     const squadId = Number(req.params.id);
-
     const squad = await MonthlySquad.findByPk(squadId, { transaction: t });
     if (!squad) {
       await t.rollback();
-      return res.status(404).json({ error: "التشكيلة غير موجودة" });
+      return res.status(404).json({ error: "Squad not found" });
+    }
+    if (!ensureGovernorateAccess(req, res, squad.governorateId)) {
+      await t.rollback();
+      return;
     }
 
     await MonthlySquadSlot.destroy({ where: { squadId }, transaction: t });
@@ -336,33 +377,37 @@ router.delete("/monthly-squads/:id", authenticateToken, async (req, res) => {
 router.put("/monthly-squads/:id", upload.none(), authenticateToken, async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    if (!isAdmin(req)) {
+    if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
       await t.rollback();
       return res.status(403).json({ error: "Not allowed" });
     }
 
     const squadId = Number(req.params.id);
     const { title, status } = req.body;
-
     if (!title || !String(title).trim()) {
       await t.rollback();
-      return res.status(400).json({ error: "title مطلوب" });
+      return res.status(400).json({ error: "title is required" });
     }
 
-    const squad = await MonthlySquad.findByPk(squadId, { transaction: t, lock: t.LOCK.UPDATE });
+    const squad = await MonthlySquad.findByPk(squadId, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
     if (!squad) {
       await t.rollback();
-      return res.status(404).json({ error: "التشكيلة غير موجودة" });
+      return res.status(404).json({ error: "Squad not found" });
+    }
+    if (!ensureGovernorateAccess(req, res, squad.governorateId)) {
+      await t.rollback();
+      return;
     }
 
     squad.title = String(title).trim();
-
     if (status) squad.status = String(status);
-
     await squad.save({ transaction: t });
 
     await t.commit();
-    return res.json({ message: "تم تحديث اسم التشكيلة", squad });
+    return res.json({ message: "Monthly squad updated", squad });
   } catch (e) {
     await t.rollback();
     console.error(e);

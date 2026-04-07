@@ -1,4 +1,5 @@
 const User = require("./user");
+const Governorate = require("./Governorate");
 const UserDevice = require("./user_device");
 const Post = require("./Post");
 const Game = require("./Game");
@@ -10,6 +11,66 @@ const MonthlySquad = require("./MonthlySquad");
 const MonthlySquadSlot = require("./MonthlySquadSlot");
 const Message = require("./Message");
 const PlayerOfMonth = require("./PlayerOfMonth");
+
+Governorate.hasMany(User, {
+  foreignKey: "governorateId",
+  as: "users",
+  onDelete: "SET NULL",
+});
+User.belongsTo(Governorate, {
+  foreignKey: "governorateId",
+  as: "governorate",
+});
+
+Governorate.hasMany(Game, {
+  foreignKey: "governorateId",
+  as: "games",
+  onDelete: "SET NULL",
+});
+Game.belongsTo(Governorate, {
+  foreignKey: "governorateId",
+  as: "governorate",
+});
+
+Governorate.hasMany(Post, {
+  foreignKey: "governorateId",
+  as: "posts",
+  onDelete: "SET NULL",
+});
+Post.belongsTo(Governorate, {
+  foreignKey: "governorateId",
+  as: "governorate",
+});
+
+Governorate.hasMany(LiveStream, {
+  foreignKey: "governorateId",
+  as: "liveStreams",
+  onDelete: "SET NULL",
+});
+LiveStream.belongsTo(Governorate, {
+  foreignKey: "governorateId",
+  as: "governorate",
+});
+
+Governorate.hasMany(MonthlySquad, {
+  foreignKey: "governorateId",
+  as: "monthlySquads",
+  onDelete: "SET NULL",
+});
+MonthlySquad.belongsTo(Governorate, {
+  foreignKey: "governorateId",
+  as: "governorate",
+});
+
+Governorate.hasMany(PlayerOfMonth, {
+  foreignKey: "governorateId",
+  as: "playerOfMonths",
+  onDelete: "SET NULL",
+});
+PlayerOfMonth.belongsTo(Governorate, {
+  foreignKey: "governorateId",
+  as: "governorate",
+});
 
 Game.hasMany(GameSlot, { foreignKey: "gameId", as: "slots", onDelete: "CASCADE", hooks: true });
 GameSlot.belongsTo(Game, { foreignKey: "gameId", as: "game" });
@@ -43,6 +104,7 @@ PlayerOfMonth.belongsTo(User, { foreignKey: "userId", as: "user" });
 
 module.exports = {
   User,
+  Governorate,
   UserDevice,
   Post,
   Game,

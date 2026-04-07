@@ -5,8 +5,18 @@ const { Op } = require("sequelize");
 const sequelize = require("../config/db");
 const { User, Game, GameSlot } = require("../models");
 const upload = require("../middlewares/uploads");
-const { authenticateToken } = require("../middlewares/auth.js");
+const {
+  authenticateToken,
+  optionalAuthenticateToken,
+} = require("../middlewares/auth.js");
 const { sendNotificationToAll  } = require('../services/notifications');
+const {
+  isAdmin,
+  isSuperAdmin,
+  getGovernorateScope,
+  applyGovernorateScope,
+  ensureGovernorateAccess,
+} = require("../services/accessScope");
 
 function buildFormation(size) {
   if (String(size) === "5") {
@@ -65,7 +75,7 @@ const calcOverall = (u) =>
 
 router.post("/games", upload.none(), authenticateToken, async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
+    if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
       return res.status(403).json({ error: "Not allowed" });
     }
 
@@ -91,6 +101,7 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
       status: "open",
       locationUrl: locationUrl || null,
       price: numericPrice,
+      governorateId: req.user.governorateId || null,
     });
 
     const slots = buildFormation(formationSize);
@@ -120,7 +131,7 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
   }
 });
 
-router.get("/games", async (req, res) => {
+router.get("/games", optionalAuthenticateToken, async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page || "1", 15), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || "15", 15), 1), 50);
@@ -128,7 +139,12 @@ router.get("/games", async (req, res) => {
 
     const now = new Date();
 
-    let where = {};
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
+
+    let where = applyGovernorateScope({}, governorateScope);
     if (req.query.formationSize) {
       where.formationSize = String(req.query.formationSize);
     }
@@ -166,7 +182,7 @@ router.get("/games", async (req, res) => {
   }
 });
 
-router.get("/games/open", async (req, res) => {
+router.get("/games/open", optionalAuthenticateToken, async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || "15", 10), 1), 50);
@@ -174,7 +190,12 @@ router.get("/games/open", async (req, res) => {
 
     const now = new Date();
 
-    let where = { status: "open" };
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
+
+    let where = applyGovernorateScope({ status: "open" }, governorateScope);
     if (req.query.formationSize) {
       where.formationSize = String(req.query.formationSize);
     }
@@ -212,7 +233,7 @@ router.get("/games/open", async (req, res) => {
   }
 });
 
-router.get("/games/closed", async (req, res) => {
+router.get("/games/closed", optionalAuthenticateToken, async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || "15", 10), 1), 50);
@@ -220,7 +241,12 @@ router.get("/games/closed", async (req, res) => {
 
     const now = new Date();
 
-    let where = { status: "closed" };
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
+
+    let where = applyGovernorateScope({ status: "closed" }, governorateScope);
     if (req.query.formationSize) {
       where.formationSize = String(req.query.formationSize);
     }
@@ -258,12 +284,24 @@ router.get("/games/closed", async (req, res) => {
   }
 });
 
-router.get("/games/:id", async (req, res) => {
+router.get("/games/:id", optionalAuthenticateToken, async (req, res) => {
   try {
     const gameId = req.params.id;
 
     const game = await Game.findByPk(gameId);
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
     if (!game) return res.status(404).json({ error: "المباراة غير موجودة" });
+
+    if (
+      game &&
+      governorateScope !== null &&
+      Number(game.governorateId) !== Number(governorateScope)
+    ) {
+      return res.status(404).json({ error: "Game not found" });
+    }
 
     const slots = await GameSlot.findAll({
       where: { gameId },
@@ -299,7 +337,7 @@ router.get("/games/:id", async (req, res) => {
 router.delete("/games/:id", authenticateToken, async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    if (req.user.role !== "admin") {
+    if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
       await t.rollback();
       return res.status(403).json({ error: "Not allowed" });
     }
@@ -307,6 +345,14 @@ router.delete("/games/:id", authenticateToken, async (req, res) => {
     const gameId = req.params.id;
 
     const game = await Game.findByPk(gameId, { transaction: t });
+    if (game && !ensureGovernorateAccess(req, res, game.governorateId)) {
+      await t.rollback();
+      return;
+    }
+    if (game && !ensureGovernorateAccess(req, res, game.governorateId)) {
+      await t.rollback();
+      return;
+    }
     if (!game) {
       await t.rollback();
       return res.status(404).json({ error: "المباراة غير موجودة" });
@@ -355,12 +401,16 @@ router.post("/games/:id/book", upload.none(), authenticateToken, async (req, res
     }
 
     const user = await User.findByPk(userId, { transaction: t });
+    if (user && Number(user.governorateId) !== Number(game.governorateId)) {
+      await t.rollback();
+      return res.status(403).json({ error: "Not allowed for this governorate" });
+    }
     if (!user) {
       await t.rollback();
       return res.status(404).json({ error: "المستخدم غير موجود بالنظام" });
     }
 
-    if (req.user.role !== "admin") {
+    if (!isAdmin(req.user)) {
       const already = await GameSlot.findOne({
         where: { gameId, userId },
         transaction: t,
@@ -402,7 +452,7 @@ router.post("/games/:id/book", upload.none(), authenticateToken, async (req, res
 });
 
 // ✅ إلغاء حجز (اللاعب يلغي حجزة)
-router.post("/games/:id/unbook", upload.none(), async (req, res) => {
+router.post("/games/:id/unbook", upload.none(), authenticateToken, async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const gameId = Number(req.params.id);
@@ -422,6 +472,11 @@ router.post("/games/:id/unbook", upload.none(), async (req, res) => {
     if (!slot) {
       await t.rollback();
       return res.status(404).json({ error: "ما عندك حجز بهذه المباراة" });
+    }
+
+    if (!isAdmin(req.user) && Number(req.user.id) !== userId) {
+      await t.rollback();
+      return res.status(403).json({ error: "Not allowed" });
     }
 
     slot.userId = null;

@@ -23,4 +23,26 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-module.exports = { authenticateToken };
+const optionalAuthenticateToken = (req, _res, next) => {
+  const header = req.headers.authorization;
+  const token = header?.startsWith("Bearer ")
+    ? header.slice(7).trim()
+    : header?.trim();
+
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      req.user = null;
+      return next();
+    }
+
+    req.user = user;
+    next();
+  });
+};
+
+module.exports = { authenticateToken, optionalAuthenticateToken };

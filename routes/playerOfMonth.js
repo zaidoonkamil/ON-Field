@@ -1,22 +1,28 @@
 const express = require("express");
 const router = express.Router();
 const { PlayerOfMonth, User, PlayerMatchStats } = require("../models");
-const { authenticateToken } = require("../middlewares/auth");
+const { authenticateToken, optionalAuthenticateToken } = require("../middlewares/auth");
 const uploadImage = require("../middlewares/uploads");
+const {
+  isAdmin,
+  isSuperAdmin,
+  getGovernorateScope,
+  applyGovernorateScope,
+  ensureGovernorateAccess,
+} = require("../services/accessScope");
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
 router.post("/player-of-month", authenticateToken, uploadImage.single("image"), async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
+    if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
       return res.status(403).json({ error: "Not allowed" });
     }
 
     const { userId, note } = req.body;
-
     if (!userId) {
-      return res.status(400).json({ error: "userId مطلوب" });
+      return res.status(400).json({ error: "userId is required" });
     }
 
     const now = new Date();
@@ -27,43 +33,45 @@ router.post("/player-of-month", authenticateToken, uploadImage.single("image"), 
     });
 
     if (!user) {
-      return res.status(404).json({ error: "اللاعب غير موجود" });
+      return res.status(404).json({ error: "Player not found" });
     }
-
-    if (user.role === "admin") {
-      return res.status(400).json({ error: "لا يمكن اختيار أدمن كلاعب الشهر" });
+    if (!ensureGovernorateAccess(req, res, user.governorateId)) {
+      return;
+    }
+    if (user.role === "admin" || user.role === "super_admin") {
+      return res.status(400).json({ error: "Admin cannot be player of the month" });
     }
 
     const file = req.file;
-    let imageData = null;
-    if (file) {
-      imageData = { main: file.filename };
-    }
+    const imageData = file ? { main: file.filename } : null;
 
     const existing = await PlayerOfMonth.findOne({
-      where: { month: selectedMonth },
+      where: {
+        month: selectedMonth,
+        governorateId: req.user.governorateId || user.governorateId || null,
+      },
     });
 
     if (existing) {
       const updateObj = {
         userId: user.id,
+        governorateId: req.user.governorateId || user.governorateId || null,
         note: note || null,
       };
-      if (imageData) {
-        updateObj.image = imageData;
-      }
+      if (imageData) updateObj.image = imageData;
       await existing.update(updateObj);
     } else {
       await PlayerOfMonth.create({
         month: selectedMonth,
         userId: user.id,
+        governorateId: req.user.governorateId || user.governorateId || null,
         note: note || null,
         image: imageData || user.image || null,
       });
     }
 
     return res.status(200).json({
-      message: "تم تحديد لاعب الشهر بنجاح",
+      message: "Player of the month saved successfully",
       data: {
         month: selectedMonth,
         userId: user.id,
@@ -71,14 +79,20 @@ router.post("/player-of-month", authenticateToken, uploadImage.single("image"), 
       },
     });
   } catch (e) {
-    console.error("❌ player of month save error:", e);
+    console.error("player of month save error:", e);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-router.get("/player-of-month", async (req, res) => {
+router.get("/player-of-month", optionalAuthenticateToken, async (req, res) => {
   try {
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
+
     const item = await PlayerOfMonth.findOne({
+      where: applyGovernorateScope({}, governorateScope),
       include: [
         {
           model: User,
@@ -106,17 +120,15 @@ router.get("/player-of-month", async (req, res) => {
     });
 
     if (!item) {
-      return res.status(404).json({ error: "لا يوجد لاعب شهر" });
+      return res.status(404).json({ error: "No player of the month found" });
     }
 
     const user = item.user ? item.user.toJSON() : null;
-
     if (!user) {
-      return res.status(404).json({ error: "بيانات اللاعب غير موجودة" });
+      return res.status(404).json({ error: "Player data not found" });
     }
 
     const statsRows = Array.isArray(user.stats) ? user.stats : [];
-
     const totals = statsRows.reduce(
       (acc, r) => {
         acc.games += 1;
@@ -137,18 +149,15 @@ router.get("/player-of-month", async (req, res) => {
       }
     );
 
-    const overall = Math.round(
-      (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
-    );
-
-    // pick image from record; fall back to user image if the record doesn't have one
-    const responseImage = item.image || (user && user.image) || null;
+    const overall = calcOverall(user);
+    const responseImage = item.image || user.image || null;
 
     return res.json({
       id: item.id,
       month: item.month,
       note: item.note || "",
       image: responseImage,
+      governorateId: item.governorateId,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
       player: {
@@ -172,14 +181,20 @@ router.get("/player-of-month", async (req, res) => {
       },
     });
   } catch (e) {
-    console.error("❌ player of month get error:", e);
+    console.error("player of month get error:", e);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-router.get("/player-of-month/history", async (req, res) => {
+router.get("/player-of-month/history", optionalAuthenticateToken, async (req, res) => {
   try {
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
+
     const rows = await PlayerOfMonth.findAll({
+      where: applyGovernorateScope({}, governorateScope),
       include: [
         {
           model: User,
@@ -197,6 +212,7 @@ router.get("/player-of-month/history", async (req, res) => {
         month: j.month,
         note: j.note || "",
         image: j.image || null,
+        governorateId: j.governorateId,
         player: j.user
           ? {
               ...j.user,
@@ -209,7 +225,7 @@ router.get("/player-of-month/history", async (req, res) => {
 
     return res.json({ data });
   } catch (e) {
-    console.error("❌ player of month history error:", e);
+    console.error("player of month history error:", e);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

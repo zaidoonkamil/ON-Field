@@ -39,6 +39,10 @@ const Game = sequelize.define("Game", {
       min: 0,
     },
   },
+  governorateId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
 
 }, { timestamps: true });
 

@@ -1,7 +1,16 @@
 const express = require("express");
 const router = express.Router();
 const uploadPostMedia = require("../middlewares/uploads");
-const { Post } = require("../models");
+const { Post, User } = require("../models");
+const {
+  authenticateToken,
+  optionalAuthenticateToken,
+} = require("../middlewares/auth");
+const {
+  getGovernorateScope,
+  applyGovernorateScope,
+  ensureGovernorateAccess,
+} = require("../services/accessScope");
 const path = require("path");
 const fs = require("fs/promises");
 
@@ -18,12 +27,14 @@ async function deletePostWithFiles(post) {
   await post.destroy();
 }
 
-async function enforceMaxPosts() {
-  const count = await Post.count();
+async function enforceMaxPosts(governorateId) {
+  const where = governorateId ? { governorateId } : {};
+  const count = await Post.count({ where });
   if (count <= MAX_POSTS) return;
 
   const toDeleteCount = count - MAX_POSTS;
   const oldPosts = await Post.findAll({
+    where,
     order: [["createdAt", "ASC"]],
     limit: toDeleteCount,
   });
@@ -44,7 +55,7 @@ function parseMediaList(value) {
     try {
       const parsed = JSON.parse(trimmed);
       return Array.isArray(parsed) ? parsed.filter(Boolean) : [trimmed];
-    } catch (e) {
+    } catch (_) {
       return [trimmed];
     }
   }
@@ -56,7 +67,7 @@ async function safeDeleteFile(filename) {
   try {
     const filePath = path.join(__dirname, "..", "uploads", filename);
     await fs.unlink(filePath);
-  } catch (e) {}
+  } catch (_) {}
 }
 
 router.post("/posts", uploadPostMedia.array("media", 100), async (req, res) => {
@@ -69,16 +80,27 @@ router.post("/posts", uploadPostMedia.array("media", 100), async (req, res) => {
       const main = (f.mimetype || "").split("/")[0];
       if (main === "image") images.push(f.filename);
       else if (main === "video") videos.push(f.filename);
-      else return res.status(400).json({ error: "مسموح فقط صور وفيديوات" });
+      else {
+        return res.status(400).json({ error: "Only images and videos are allowed" });
+      }
+    }
+
+    let governorateId = null;
+    if (userId) {
+      const user = await User.findByPk(Number(userId), {
+        attributes: ["id", "governorateId"],
+      });
+      governorateId = user?.governorateId || null;
     }
 
     const post = await Post.create({
       userId: userId ? Number(userId) : null,
+      governorateId,
       text: text || null,
       media: { images, videos },
     });
 
-    await enforceMaxPosts();
+    await enforceMaxPosts(governorateId);
     return res.status(201).json(post);
   } catch (e) {
     console.error(e);
@@ -86,13 +108,19 @@ router.post("/posts", uploadPostMedia.array("media", 100), async (req, res) => {
   }
 });
 
-router.get("/posts", async (req, res) => {
+router.get("/posts", optionalAuthenticateToken, async (req, res) => {
   try {
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 30;
     const offset = (page - 1) * limit;
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
 
     const posts = await Post.findAll({
+      where: applyGovernorateScope({}, governorateScope),
       order: [["createdAt", "DESC"]],
       limit,
       offset,
@@ -105,70 +133,87 @@ router.get("/posts", async (req, res) => {
   }
 });
 
-router.put("/posts/:id", uploadPostMedia.array("media", 100), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { text } = req.body;
+router.put(
+  "/posts/:id",
+  authenticateToken,
+  uploadPostMedia.array("media", 100),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { text } = req.body;
 
-    const post = await Post.findByPk(id);
-    if (!post) {
-      return res.status(404).json({ error: "المنشور غير موجود" });
+      const post = await Post.findByPk(id);
+      if (!post) {
+        return res.status(404).json({ error: "Post not found" });
+      }
+      if (!ensureGovernorateAccess(req, res, post.governorateId)) {
+        return;
+      }
+
+      const currentImages = post.media?.images || [];
+      const currentVideos = post.media?.videos || [];
+      const removeImages = parseMediaList(req.body.removeImages);
+      const removeVideos = parseMediaList(req.body.removeVideos);
+
+      const invalidRemoveImage = removeImages.find(
+        (name) => !currentImages.includes(name)
+      );
+      if (invalidRemoveImage) {
+        return res.status(400).json({ error: "Image to remove does not exist" });
+      }
+
+      const invalidRemoveVideo = removeVideos.find(
+        (name) => !currentVideos.includes(name)
+      );
+      if (invalidRemoveVideo) {
+        return res.status(400).json({ error: "Video to remove does not exist" });
+      }
+
+      const newImages = [];
+      const newVideos = [];
+
+      for (const f of req.files || []) {
+        const main = (f.mimetype || "").split("/")[0];
+        if (main === "image") newImages.push(f.filename);
+        else if (main === "video") newVideos.push(f.filename);
+        else {
+          return res.status(400).json({ error: "Only images and videos are allowed" });
+        }
+      }
+
+      post.media = {
+        images: currentImages.filter((name) => !removeImages.includes(name)).concat(newImages),
+        videos: currentVideos.filter((name) => !removeVideos.includes(name)).concat(newVideos),
+      };
+
+      if (text !== undefined) {
+        post.text = text;
+      }
+
+      await post.save();
+
+      for (const f of [...removeImages, ...removeVideos]) {
+        await safeDeleteFile(f);
+      }
+
+      return res.status(200).json(post);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: "Internal Server Error" });
     }
-
-    const currentImages = post.media?.images || [];
-    const currentVideos = post.media?.videos || [];
-    const removeImages = parseMediaList(req.body.removeImages);
-    const removeVideos = parseMediaList(req.body.removeVideos);
-
-    const invalidRemoveImage = removeImages.find((name) => !currentImages.includes(name));
-    if (invalidRemoveImage) {
-      return res.status(400).json({ error: "صورة مطلوبة للحذف غير موجودة داخل المنشور" });
-    }
-
-    const invalidRemoveVideo = removeVideos.find((name) => !currentVideos.includes(name));
-    if (invalidRemoveVideo) {
-      return res.status(400).json({ error: "فيديو مطلوب للحذف غير موجود داخل المنشور" });
-    }
-
-    const newImages = [];
-    const newVideos = [];
-
-    for (const f of req.files || []) {
-      const main = (f.mimetype || "").split("/")[0];
-      if (main === "image") newImages.push(f.filename);
-      else if (main === "video") newVideos.push(f.filename);
-      else return res.status(400).json({ error: "مسموح فقط صور وفيديوات" });
-    }
-
-    post.media = {
-      images: currentImages.filter((name) => !removeImages.includes(name)).concat(newImages),
-      videos: currentVideos.filter((name) => !removeVideos.includes(name)).concat(newVideos),
-    };
-
-    if (text !== undefined) {
-      post.text = text;
-    }
-
-    await post.save();
-
-    for (const f of [...removeImages, ...removeVideos]) {
-      await safeDeleteFile(f);
-    }
-
-    return res.status(200).json(post);
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: "Internal Server Error" });
   }
-});
+);
 
-router.delete("/posts/:id", async (req, res) => {
+router.delete("/posts/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
     const post = await Post.findByPk(id);
     if (!post) {
-      return res.status(404).json({ error: "المنشور غير موجود" });
+      return res.status(404).json({ error: "Post not found" });
+    }
+    if (!ensureGovernorateAccess(req, res, post.governorateId)) {
+      return;
     }
 
     const images = post.media?.images || [];
@@ -179,7 +224,7 @@ router.delete("/posts/:id", async (req, res) => {
     }
 
     await post.destroy();
-    return res.status(200).json({ message: "تم حذف المنشور بنجاح" });
+    return res.status(200).json({ message: "Post deleted successfully" });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: "Internal Server Error" });

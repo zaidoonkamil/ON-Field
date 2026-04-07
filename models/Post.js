@@ -8,6 +8,10 @@ const Post = sequelize.define("Post", {
     type: DataTypes.INTEGER,
     allowNull: true, 
   },
+  governorateId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
 
   text: { type: DataTypes.TEXT, allowNull: true },
 

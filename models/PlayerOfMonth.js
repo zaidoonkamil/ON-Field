@@ -15,6 +15,10 @@ const PlayerOfMonth = sequelize.define("PlayerOfMonth", {
     type: DataTypes.INTEGER,
     allowNull: false,
   },
+  governorateId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   note: {
     type: DataTypes.STRING,
     allowNull: true,

@@ -3,14 +3,27 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const { Op } = require("sequelize");
-const { User, UserDevice, PlayerMatchStats, Game} = require("../models");
+const {
+  User,
+  UserDevice,
+  PlayerMatchStats,
+  Game,
+  Governorate,
+} = require("../models");
 const uploadImage = require("../middlewares/uploads");
+const { optionalAuthenticateToken } = require("../middlewares/auth");
+const { normalizeGovernorateName } = require("../services/governorates");
+const {
+  getGovernorateScope,
+  applyGovernorateScope,
+} = require("../services/accessScope");
 
 const router = express.Router();
 const upload = multer();
 const saltRounds = 10;
 
-const POSITIONS = ["GK","CB","LB","RB","CM","AMF","RWF","LWF","CF"];
+const POSITIONS = ["GK", "CB", "LB", "RB", "CM", "AMF", "RWF", "LWF", "CF"];
+const ADMIN_ROLES = ["admin", "super_admin"];
 
 const normalizePhone = (phone = "") => {
   phone = String(phone).trim();
@@ -26,25 +39,57 @@ const clampStat = (v, def = 100) => {
 
 const generateToken = (user) => {
   return jwt.sign(
-    { id: user.id, phone: user.phone, role: user.role },
+    {
+      id: user.id,
+      phone: user.phone,
+      role: user.role,
+      governorateId: user.governorateId ?? null,
+    },
     process.env.JWT_SECRET,
     { expiresIn: "700d" }
   );
 };
 
+const mapGovernorate = (governorate) => {
+  if (!governorate) return null;
+
+  return {
+    id: governorate.id,
+    name: governorate.name,
+    isActive: governorate.isActive,
+  };
+};
+
+async function resolveGovernorate({ governorateId, governorate }) {
+  if (governorateId) {
+    return Governorate.findByPk(Number(governorateId));
+  }
+
+  if (governorate) {
+    return Governorate.findOne({
+      where: { name: normalizeGovernorateName(governorate) },
+    });
+  }
+
+  return null;
+}
+
 router.post("/users", uploadImage.array("images", 5), async (req, res) => {
   try {
-    const { name, password, role = "user", position } = req.body;
-    let { phone } = req.body;
+    const { name, password, position } = req.body;
+    let { phone, governorateId, governorate } = req.body;
 
     phone = normalizePhone(phone);
 
-    if (!name || !phone || !password) {
-      return res.status(400).json({ error: "جميع الحقول مطلوبة: name, phone, password" });
+    if (!name || !phone || !password || (!governorateId && !governorate)) {
+      return res.status(400).json({
+        error:
+          "All required fields must be provided: name, phone, password, governorate",
+      });
     }
 
     if (position && !POSITIONS.includes(position)) {
-      return res.status(400).json({ error: "المركز غير صحيح" });
+      return res.status(400).json({ error: "Invalid position" });
     }
 
     const spd = clampStat(req.body.spd, 100);
@@ -56,7 +101,29 @@ router.post("/users", uploadImage.array("images", 5), async (req, res) => {
 
     const existingPhone = await User.findOne({ where: { phone } });
     if (existingPhone) {
-      return res.status(400).json({ error: "تم استخدام رقم الهاتف من مستخدم اخر" });
+      return res.status(400).json({ error: "Phone already exists" });
+    }
+
+    const selectedGovernorate = await resolveGovernorate({
+      governorateId,
+      governorate,
+    });
+
+    if (!selectedGovernorate || !selectedGovernorate.isActive) {
+      return res.status(400).json({ error: "Governorate is not available" });
+    }
+
+    const adminsCount = await User.count({
+      where: {
+        governorateId: selectedGovernorate.id,
+        role: { [Op.in]: ADMIN_ROLES },
+      },
+    });
+
+    if (!adminsCount) {
+      return res.status(400).json({
+        error: "This governorate does not have an admin yet",
+      });
     }
 
     const images = req.files && Array.isArray(req.files)
@@ -69,9 +136,15 @@ router.post("/users", uploadImage.array("images", 5), async (req, res) => {
       name,
       phone,
       password: hashedPassword,
-      role,
+      role: "user",
+      governorateId: selectedGovernorate.id,
       position: position || null,
-      spd, fin, pas, skl, tkl, str,
+      spd,
+      fin,
+      pas,
+      skl,
+      tkl,
+      str,
       image: images.length ? { main: images[0], images } : null,
     });
 
@@ -80,14 +153,23 @@ router.post("/users", uploadImage.array("images", 5), async (req, res) => {
       name: user.name,
       phone: user.phone,
       role: user.role,
+      governorateId: user.governorateId,
+      governorate: mapGovernorate(selectedGovernorate),
       position: user.position,
-      stats: { spd: user.spd, fin: user.fin, pas: user.pas, skl: user.skl, tkl: user.tkl, str: user.str },
+      stats: {
+        spd: user.spd,
+        fin: user.fin,
+        pas: user.pas,
+        skl: user.skl,
+        tkl: user.tkl,
+        str: user.str,
+      },
       image: user.image,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     });
   } catch (err) {
-    console.error("❌ Error creating user:", err);
+    console.error("Error creating user:", err);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
@@ -100,17 +182,21 @@ router.post("/login", upload.none(), async (req, res) => {
     phone = normalizePhone(phone);
 
     if (!phone || !password) {
-      return res.status(400).json({ error: "يرجى إدخال رقم الهاتف وكلمة المرور" });
+      return res.status(400).json({ error: "Phone and password are required" });
     }
 
-    const user = await User.findOne({ where: { phone } });
+    const user = await User.findOne({
+      where: { phone },
+      include: [{ model: Governorate, as: "governorate" }],
+    });
+
     if (!user) {
-      return res.status(400).json({ error: "يرجى إدخال رقم الهاتف بشكل صحيح" });
+      return res.status(400).json({ error: "Invalid phone number" });
     }
 
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) {
-      return res.status(400).json({ error: "كلمة المرور غير صحيحة" });
+      return res.status(400).json({ error: "Invalid password" });
     }
 
     const token = generateToken(user);
@@ -122,30 +208,48 @@ router.post("/login", upload.none(), async (req, res) => {
         name: user.name,
         phone: user.phone,
         role: user.role,
+        governorateId: user.governorateId,
+        governorate: mapGovernorate(user.governorate),
         position: user.position,
-        stats: { spd: user.spd, fin: user.fin, pas: user.pas, skl: user.skl, tkl: user.tkl, str: user.str },
+        stats: {
+          spd: user.spd,
+          fin: user.fin,
+          pas: user.pas,
+          skl: user.skl,
+          tkl: user.tkl,
+          str: user.str,
+        },
         image: user.image,
       },
       token,
     });
   } catch (err) {
-    console.error("❌ خطأ أثناء تسجيل الدخول:", err);
-    return res.status(500).json({ error: "خطأ داخلي في الخادم" });
+    console.error("Error logging in:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-router.get("/usersOnly", async (req, res) => {
+router.get("/usersOnly", optionalAuthenticateToken, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 30;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 30;
     const offset = (page - 1) * limit;
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
 
     const { count, rows: users } = await User.findAndCountAll({
-      where: { role: { [Op.notIn]: ["admin"] } },
+      where: applyGovernorateScope(
+        { role: { [Op.notIn]: ADMIN_ROLES } },
+        governorateScope
+      ),
       limit,
       offset,
       order: [["createdAt", "DESC"]],
       attributes: { exclude: ["password"] },
+      include: [{ model: Governorate, as: "governorate" }],
     });
 
     return res.status(200).json({
@@ -158,18 +262,30 @@ router.get("/usersOnly", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("❌ Error fetching users:", err);
+    console.error("Error fetching users:", err);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-router.get("/user/:id", async (req, res) => {
+router.get("/user/:id", optionalAuthenticateToken, async (req, res) => {
   try {
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
+
     const user = await User.findByPk(req.params.id, {
       attributes: { exclude: ["password"] },
+      include: [{ model: Governorate, as: "governorate" }],
     });
 
-    if (!user) return res.status(404).json({ error: "المستخدم غير موجود" });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (
+      governorateScope !== null &&
+      Number(user.governorateId) !== Number(governorateScope)
+    ) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
     const overall = Math.round(
       (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
@@ -177,19 +293,29 @@ router.get("/user/:id", async (req, res) => {
 
     return res.status(200).json({
       ...user.toJSON(),
-      overall, 
+      governorate: mapGovernorate(user.governorate),
+      overall,
     });
   } catch (err) {
-    console.error("❌ Error fetching user:", err);
+    console.error("Error fetching user:", err);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-router.get("/user-stats/:id", async (req, res) => {
+router.get("/user-stats/:id", optionalAuthenticateToken, async (req, res) => {
   try {
+    const governorateScope = getGovernorateScope(req, { allowQuery: true });
+    if (governorateScope === undefined) {
+      return res.status(400).json({ error: "governorateId is required" });
+    }
+
     const user = await User.findByPk(req.params.id, {
       attributes: { exclude: ["password"] },
       include: [
+        {
+          model: Governorate,
+          as: "governorate",
+        },
         {
           model: PlayerMatchStats,
           as: "stats",
@@ -209,7 +335,13 @@ router.get("/user-stats/:id", async (req, res) => {
     });
 
     if (!user) {
-      return res.status(404).json({ error: "المستخدم غير موجود" });
+      return res.status(404).json({ error: "User not found" });
+    }
+    if (
+      governorateScope !== null &&
+      Number(user.governorateId) !== Number(governorateScope)
+    ) {
+      return res.status(404).json({ error: "User not found" });
     }
 
     const userJson = user.toJSON();
@@ -236,7 +368,13 @@ router.get("/user-stats/:id", async (req, res) => {
     );
 
     const overall = Math.round(
-      (userJson.spd + userJson.fin + userJson.pas + userJson.skl + userJson.tkl + userJson.str) / 6
+      (userJson.spd +
+        userJson.fin +
+        userJson.pas +
+        userJson.skl +
+        userJson.tkl +
+        userJson.str) /
+        6
     );
 
     return res.status(200).json({
@@ -244,6 +382,8 @@ router.get("/user-stats/:id", async (req, res) => {
       name: userJson.name,
       phone: userJson.phone,
       role: userJson.role,
+      governorateId: userJson.governorateId,
+      governorate: mapGovernorate(userJson.governorate),
       position: userJson.position || "",
       image: userJson.image,
       overall,
@@ -253,7 +393,7 @@ router.get("/user-stats/:id", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("❌ Error fetching user stats:", err);
+    console.error("Error fetching user stats:", err);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
@@ -279,24 +419,39 @@ router.get("/profile", async (req, res) => {
         if (to) gameWhere.startsAt[Op.lte] = new Date(to);
       }
 
-      const includeGame = (status || from || to)
-        ? [{
-            model: Game,
-            as: "game",
-            where: gameWhere,
-            required: true,
-            attributes: ["id", "status", "startsAt"],
-          }]
-        : [];
+      const includeGame =
+        status || from || to
+          ? [
+              {
+                model: Game,
+                as: "game",
+                where: gameWhere,
+                required: true,
+                attributes: ["id", "status", "startsAt"],
+              },
+            ]
+          : [];
 
       const userRow = await User.findByPk(decoded.id, {
         attributes: { exclude: ["password"] },
         include: [
           {
+            model: Governorate,
+            as: "governorate",
+          },
+          {
             model: PlayerMatchStats,
             as: "stats",
             required: false,
-            attributes: ["gameId", "team", "goals", "assists", "yellowCards", "redCards", "isMotm"],
+            attributes: [
+              "gameId",
+              "team",
+              "goals",
+              "assists",
+              "yellowCards",
+              "redCards",
+              "isMotm",
+            ],
             include: includeGame,
           },
         ],
@@ -318,14 +473,21 @@ router.get("/profile", async (req, res) => {
           if (r.isMotm) acc.motm += 1;
           return acc;
         },
-        { games: 0, goals: 0, assists: 0, yellowCards: 0, redCards: 0, motm: 0 }
+        {
+          games: 0,
+          goals: 0,
+          assists: 0,
+          yellowCards: 0,
+          redCards: 0,
+          motm: 0,
+        }
       );
 
       const overall = Math.round(
         (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
       );
 
-      const gameIds = [...new Set(statsRows.map(r => r.gameId).filter(Boolean))];
+      const gameIds = [...new Set(statsRows.map((r) => r.gameId).filter(Boolean))];
 
       let wdl = { wins: 0, draws: 0, losses: 0 };
 
@@ -363,6 +525,7 @@ router.get("/profile", async (req, res) => {
 
       return res.status(200).json({
         ...user,
+        governorate: mapGovernorate(user.governorate),
         position: user.position || "",
         overall,
         stats: {
@@ -371,7 +534,7 @@ router.get("/profile", async (req, res) => {
         },
       });
     } catch (error) {
-      console.error("❌ Error fetching user profile:", error);
+      console.error("Error fetching user profile:", error);
       return res.status(500).json({ error: "Internal Server Error" });
     }
   });
@@ -388,10 +551,10 @@ router.put("/profile", uploadImage.array("images", 5), async (req, res) => {
       const user = await User.findByPk(decoded.id);
       if (!user) return res.status(404).json({ error: "User not found" });
 
-      let { name, phone, password, position } = req.body;
+      let { name, phone, password, position, governorateId } = req.body;
 
       if (position && !POSITIONS.includes(position)) {
-        return res.status(400).json({ error: "المركز غير صحيح" });
+        return res.status(400).json({ error: "Invalid position" });
       }
 
       if (phone) {
@@ -400,7 +563,7 @@ router.put("/profile", uploadImage.array("images", 5), async (req, res) => {
           where: { phone, id: { [Op.ne]: user.id } },
         });
         if (exists) {
-          return res.status(400).json({ error: "تم استخدام رقم الهاتف من مستخدم اخر" });
+          return res.status(400).json({ error: "Phone already exists" });
         }
         user.phone = phone;
       }
@@ -408,13 +571,21 @@ router.put("/profile", uploadImage.array("images", 5), async (req, res) => {
       if (name !== undefined) user.name = name;
       if (position !== undefined) user.position = position || null;
 
+      if (governorateId !== undefined) {
+        const governorate = await Governorate.findByPk(Number(governorateId));
+        if (!governorate) {
+          return res.status(404).json({ error: "Governorate not found" });
+        }
+        user.governorateId = governorate.id;
+      }
+
       if (password) {
         const hashed = await bcrypt.hash(password, saltRounds);
         user.password = hashed;
       }
 
       const images = req.files && Array.isArray(req.files)
-        ? req.files.map(f => f.filename)
+        ? req.files.map((f) => f.filename)
         : [];
       if (images.length) {
         user.image = { main: images[0], images };
@@ -427,14 +598,22 @@ router.put("/profile", uploadImage.array("images", 5), async (req, res) => {
       );
 
       return res.status(200).json({
-        message: "تم تحديث الملف الشخصي بنجاح",
+        message: "Profile updated successfully",
         user: {
           id: user.id,
           name: user.name,
           phone: user.phone,
           role: user.role,
+          governorateId: user.governorateId,
           position: user.position,
-          stats: { spd: user.spd, fin: user.fin, pas: user.pas, skl: user.skl, tkl: user.tkl, str: user.str },
+          stats: {
+            spd: user.spd,
+            fin: user.fin,
+            pas: user.pas,
+            skl: user.skl,
+            tkl: user.tkl,
+            str: user.str,
+          },
           overall,
           image: user.image,
           createdAt: user.createdAt,
@@ -442,7 +621,7 @@ router.put("/profile", uploadImage.array("images", 5), async (req, res) => {
         },
       });
     } catch (error) {
-      console.error("❌ Error updating profile:", error);
+      console.error("Error updating profile:", error);
       return res.status(500).json({ error: "Internal Server Error" });
     }
   });
@@ -453,13 +632,15 @@ router.delete("/users/:id", async (req, res) => {
     const user = await User.findByPk(req.params.id, {
       include: { model: UserDevice, as: "devices" },
     });
-    if (!user) return res.status(404).json({ error: "المستخدم غير موجود" });
+    if (!user) return res.status(404).json({ error: "User not found" });
 
     await user.destroy();
-    return res.status(200).json({ message: "تم حذف المستخدم وأجهزته بنجاح" });
+    return res
+      .status(200)
+      .json({ message: "User and devices deleted successfully" });
   } catch (err) {
-    console.error("❌ خطأ أثناء الحذف:", err);
-    return res.status(500).json({ error: "حدث خطأ أثناء عملية الحذف" });
+    console.error("Error deleting user:", err);
+    return res.status(500).json({ error: "Delete failed" });
   }
 });
 
@@ -468,12 +649,12 @@ router.put("/users/:id", uploadImage.array("images", 5), async (req, res) => {
     const { id } = req.params;
 
     const user = await User.findByPk(id);
-    if (!user) return res.status(404).json({ error: "المستخدم غير موجود" });
+    if (!user) return res.status(404).json({ error: "User not found" });
 
-    let { name, phone, password, role, position } = req.body;
+    let { name, phone, password, role, position, governorateId } = req.body;
 
     if (position && !POSITIONS.includes(position)) {
-      return res.status(400).json({ error: "المركز غير صحيح" });
+      return res.status(400).json({ error: "Invalid position" });
     }
 
     if (phone) {
@@ -483,7 +664,7 @@ router.put("/users/:id", uploadImage.array("images", 5), async (req, res) => {
         where: { phone, id: { [Op.ne]: user.id } },
       });
       if (exists) {
-        return res.status(400).json({ error: "تم استخدام رقم الهاتف من مستخدم اخر" });
+        return res.status(400).json({ error: "Phone already exists" });
       }
 
       user.phone = phone;
@@ -492,6 +673,14 @@ router.put("/users/:id", uploadImage.array("images", 5), async (req, res) => {
     if (name !== undefined) user.name = name;
     if (role !== undefined) user.role = role;
     if (position !== undefined) user.position = position || null;
+
+    if (governorateId !== undefined) {
+      const governorate = await Governorate.findByPk(Number(governorateId));
+      if (!governorate) {
+        return res.status(404).json({ error: "Governorate not found" });
+      }
+      user.governorateId = governorate.id;
+    }
 
     const hasAnyStat =
       req.body.spd !== undefined ||
@@ -530,33 +719,30 @@ router.put("/users/:id", uploadImage.array("images", 5), async (req, res) => {
     );
 
     return res.status(200).json({
-      message: "تم تحديث بيانات المستخدم بنجاح",
+      message: "User updated successfully",
       user: {
         id: user.id,
         name: user.name,
         phone: user.phone,
         role: user.role,
+        governorateId: user.governorateId,
         position: user.position,
-
         spd: user.spd,
         fin: user.fin,
         pas: user.pas,
         skl: user.skl,
         tkl: user.tkl,
         str: user.str,
-
         overall,
         image: user.image,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
     });
-
   } catch (err) {
-    console.error("❌ Error updating user:", err);
+    console.error("Error updating user:", err);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
 
 module.exports = router;

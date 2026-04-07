@@ -23,6 +23,10 @@ const LiveStream = sequelize.define("LiveStream", {
      allowNull: false, 
      defaultValue: true
     },
+  governorateId: {
+     type: DataTypes.INTEGER,
+     allowNull: true,
+    },
 }, {
      timestamps: true 
 });
