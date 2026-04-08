@@ -360,6 +360,157 @@ router.get(
   }
 );
 
+router.get(
+  "/super-admin/governorates/:id/stats",
+  authenticateToken,
+  requireRoles("super_admin"),
+  async (req, res) => {
+    try {
+      const governorate = await Governorate.findByPk(Number(req.params.id));
+      if (!governorate) {
+        return res.status(404).json({ error: "Governorate not found" });
+      }
+
+      const [
+        usersCount,
+        adminsCount,
+        activeAdminsCount,
+        gamesCount,
+        openGamesCount,
+        closedGamesCount,
+        bookingsCount,
+        postsCount,
+        livesCount,
+        activeLivesCount,
+        monthlySquadsCount,
+        publishedMonthlySquadsCount,
+        playerOfMonthCount,
+        admins,
+        recentGames,
+        recentPosts,
+      ] = await Promise.all([
+        User.count({
+          where: { governorateId: governorate.id, role: "user" },
+        }),
+        User.count({
+          where: { governorateId: governorate.id, role: "admin" },
+        }),
+        User.count({
+          where: {
+            governorateId: governorate.id,
+            role: "admin",
+            isActive: true,
+          },
+        }),
+        Game.count({ where: { governorateId: governorate.id } }),
+        Game.count({
+          where: { governorateId: governorate.id, status: "open" },
+        }),
+        Game.count({
+          where: { governorateId: governorate.id, status: "closed" },
+        }),
+        GameSlot.count({
+          include: [
+            {
+              model: Game,
+              as: "game",
+              required: true,
+              attributes: [],
+              where: { governorateId: governorate.id },
+            },
+          ],
+          where: { userId: { [Op.ne]: null } },
+        }),
+        Post.count({ where: { governorateId: governorate.id } }),
+        LiveStream.count({ where: { governorateId: governorate.id } }),
+        LiveStream.count({
+          where: { governorateId: governorate.id, isActive: true },
+        }),
+        MonthlySquad.count({ where: { governorateId: governorate.id } }),
+        MonthlySquad.count({
+          where: { governorateId: governorate.id, status: "published" },
+        }),
+        PlayerOfMonth.count({ where: { governorateId: governorate.id } }),
+        User.findAll({
+          where: { governorateId: governorate.id, role: "admin" },
+          order: [["createdAt", "DESC"]],
+          attributes: ["id", "name", "phone", "role", "isActive", "createdAt"],
+        }),
+        Game.findAll({
+          where: { governorateId: governorate.id },
+          order: [["startsAt", "DESC"]],
+          limit: 5,
+          attributes: [
+            "id",
+            "stadiumName",
+            "startsAt",
+            "formationSize",
+            "status",
+            "price",
+            "createdAt",
+          ],
+        }),
+        Post.findAll({
+          where: { governorateId: governorate.id },
+          order: [["createdAt", "DESC"]],
+          limit: 5,
+          attributes: ["id", "text", "media", "createdAt"],
+        }),
+      ]);
+
+      return res.status(200).json({
+        governorate: mapGovernorate(governorate),
+        overview: {
+          usersCount,
+          adminsCount,
+          activeAdminsCount,
+          gamesCount,
+          openGamesCount,
+          closedGamesCount,
+          bookingsCount,
+          postsCount,
+          livesCount,
+          activeLivesCount,
+          monthlySquadsCount,
+          publishedMonthlySquadsCount,
+          playerOfMonthCount,
+        },
+        admins: admins.map((admin) => ({
+          id: admin.id,
+          name: admin.name,
+          phone: admin.phone,
+          role: admin.role,
+          isActive: admin.isActive,
+          createdAt: admin.createdAt,
+        })),
+        recentGames: recentGames.map((game) => ({
+          id: game.id,
+          stadiumName: game.stadiumName,
+          startsAt: game.startsAt,
+          formationSize: game.formationSize,
+          status: game.status,
+          price: game.price,
+          createdAt: game.createdAt,
+        })),
+        recentPosts: recentPosts.map((post) => ({
+          id: post.id,
+          text: post.text,
+          imagesCount: Array.isArray(post.media?.images)
+            ? post.media.images.length
+            : 0,
+          videosCount: Array.isArray(post.media?.videos)
+            ? post.media.videos.length
+            : 0,
+          createdAt: post.createdAt,
+        })),
+      });
+    } catch (error) {
+      console.error("Error fetching governorate stats:", error);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+);
+
 router.post(
   "/super-admin/admins",
   authenticateToken,
