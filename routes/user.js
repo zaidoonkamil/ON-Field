@@ -23,7 +23,7 @@ const upload = multer();
 const saltRounds = 10;
 
 const POSITIONS = ["GK", "CB", "LB", "RB", "CM", "AMF", "RWF", "LWF", "CF"];
-const ADMIN_ROLES = ["admin", "super_admin"];
+const GOVERNORATE_ADMIN_ROLES = ["admin"];
 
 const normalizePhone = (phone = "") => {
   phone = String(phone).trim();
@@ -116,7 +116,8 @@ router.post("/users", uploadImage.array("images", 5), async (req, res) => {
     const adminsCount = await User.count({
       where: {
         governorateId: selectedGovernorate.id,
-        role: { [Op.in]: ADMIN_ROLES },
+        role: { [Op.in]: GOVERNORATE_ADMIN_ROLES },
+        isActive: true,
       },
     });
 
@@ -246,7 +247,7 @@ router.get("/usersOnly", optionalAuthenticateToken, async (req, res) => {
 
     const { count, rows: users } = await User.findAndCountAll({
       where: applyGovernorateScope(
-        { role: { [Op.notIn]: ADMIN_ROLES } },
+        { role: { [Op.notIn]: ["admin", "super_admin"] } },
         governorateScope
       ),
       limit,
