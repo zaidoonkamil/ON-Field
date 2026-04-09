@@ -27,7 +27,16 @@ async function ensureUserRoleEnum(queryInterface, tableName) {
 
   if (!typeText.includes("super_admin")) {
     await queryInterface.changeColumn(tableName, "role", {
-      type: DataTypes.ENUM("user", "admin", "super_admin"),
+      type: DataTypes.ENUM("user", "admin", "super_admin", "photographer"),
+      allowNull: false,
+      defaultValue: "user",
+    });
+    return;
+  }
+
+  if (!typeText.includes("photographer")) {
+    await queryInterface.changeColumn(tableName, "role", {
+      type: DataTypes.ENUM("user", "admin", "super_admin", "photographer"),
       allowNull: false,
       defaultValue: "user",
     });

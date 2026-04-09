@@ -247,7 +247,7 @@ router.get("/usersOnly", optionalAuthenticateToken, async (req, res) => {
 
     const { count, rows: users } = await User.findAndCountAll({
       where: applyGovernorateScope(
-        { role: { [Op.notIn]: ["admin", "super_admin"] } },
+        { role: { [Op.notIn]: ["admin", "super_admin", "photographer"] } },
         governorateScope
       ),
       limit,

@@ -6,6 +6,7 @@ const {
   authenticateToken,
   optionalAuthenticateToken,
 } = require("../middlewares/auth");
+const { requireRoles } = require("../middlewares/authorization");
 const {
   getGovernorateScope,
   applyGovernorateScope,
@@ -70,9 +71,14 @@ async function safeDeleteFile(filename) {
   } catch (_) {}
 }
 
-router.post("/posts", uploadPostMedia.array("media", 100), async (req, res) => {
+router.post(
+  "/posts",
+  authenticateToken,
+  requireRoles("admin", "super_admin", "photographer"),
+  uploadPostMedia.array("media", 100),
+  async (req, res) => {
   try {
-    const { userId, text } = req.body;
+    const { text } = req.body;
     const images = [];
     const videos = [];
 
@@ -85,16 +91,13 @@ router.post("/posts", uploadPostMedia.array("media", 100), async (req, res) => {
       }
     }
 
-    let governorateId = null;
-    if (userId) {
-      const user = await User.findByPk(Number(userId), {
-        attributes: ["id", "governorateId"],
-      });
-      governorateId = user?.governorateId || null;
-    }
+    const user = await User.findByPk(Number(req.user.id), {
+      attributes: ["id", "governorateId"],
+    });
+    const governorateId = user?.governorateId || null;
 
     const post = await Post.create({
-      userId: userId ? Number(userId) : null,
+      userId: Number(req.user.id),
       governorateId,
       text: text || null,
       media: { images, videos },
@@ -136,6 +139,7 @@ router.get("/posts", optionalAuthenticateToken, async (req, res) => {
 router.put(
   "/posts/:id",
   authenticateToken,
+  requireRoles("admin", "super_admin", "photographer"),
   uploadPostMedia.array("media", 100),
   async (req, res) => {
     try {
@@ -204,7 +208,11 @@ router.put(
   }
 );
 
-router.delete("/posts/:id", authenticateToken, async (req, res) => {
+router.delete(
+  "/posts/:id",
+  authenticateToken,
+  requireRoles("admin", "super_admin", "photographer"),
+  async (req, res) => {
   try {
     const { id } = req.params;
 

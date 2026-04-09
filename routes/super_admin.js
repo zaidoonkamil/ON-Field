@@ -18,7 +18,7 @@ const { normalizeGovernorateName } = require("../services/governorates");
 const router = express.Router();
 const saltRounds = 10;
 
-const ADMIN_ACCOUNT_ROLES = ["admin", "super_admin"];
+const ADMIN_ACCOUNT_ROLES = ["admin", "super_admin", "photographer"];
 const GOVERNORATE_ADMIN_ROLES = ["admin"];
 const USER_ROLES = ["user", "admin"];
 const POSITIONS = ["GK", "CB", "LB", "RB", "CM", "AMF", "RWF", "LWF", "CF"];
@@ -59,7 +59,7 @@ async function resolveGovernorateIdForRole({ role, governorateId }) {
   }
 
   if (!governorateId) {
-    throw { status: 400, message: "governorateId is required for admin" };
+    throw { status: 400, message: "governorateId is required for this role" };
   }
 
   const governorate = await Governorate.findByPk(Number(governorateId));
@@ -204,7 +204,9 @@ router.post("/create-super-admin", async (req, res) => {
     let { phone, governorateId, role } = req.body;
 
     phone = normalizePhone(phone);
-    role = role === "super_admin" ? "super_admin" : "admin";
+    role = ["super_admin", "admin", "photographer"].includes(role)
+      ? role
+      : "admin";
 
     if (!name || !phone || !password) {
       return res.status(400).json({
@@ -536,7 +538,9 @@ router.post(
       let { phone, governorateId, role } = req.body;
 
       phone = normalizePhone(phone);
-      role = role === "super_admin" ? "super_admin" : "admin";
+      role = ["super_admin", "admin", "photographer"].includes(role)
+        ? role
+        : "admin";
 
       if (!name || !phone || !password) {
         return res.status(400).json({
@@ -587,6 +591,64 @@ router.post(
         return res.status(error.status).json({ error: error.message });
       }
       console.error("Error creating admin:", error);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+);
+
+router.post(
+  "/admin/photographers",
+  authenticateToken,
+  requireRoles("admin"),
+  async (req, res) => {
+    try {
+      const { name, password } = req.body;
+      let { phone } = req.body;
+
+      phone = normalizePhone(phone);
+
+      if (!req.user.governorateId) {
+        return res.status(400).json({
+          error: "Admin account must be linked to a governorate",
+        });
+      }
+
+      if (!name || !phone || !password) {
+        return res.status(400).json({
+          error: "name, phone and password are required",
+        });
+      }
+
+      const governorate = await Governorate.findByPk(req.user.governorateId);
+      if (!governorate || !governorate.isActive) {
+        return res.status(400).json({ error: "Governorate is not available" });
+      }
+
+      const existingPhone = await User.findOne({ where: { phone } });
+      if (existingPhone) {
+        return res.status(409).json({ error: "Phone already exists" });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+      const photographer = await User.create({
+        name: String(name).trim(),
+        phone,
+        password: hashedPassword,
+        role: "photographer",
+        isActive: true,
+        governorateId: req.user.governorateId,
+        image: null,
+      });
+
+      const photographerWithGovernorate = await User.findByPk(photographer.id, {
+        include: [{ model: Governorate, as: "governorate" }],
+        attributes: { exclude: ["password"] },
+      });
+
+      return res.status(201).json(mapAdmin(photographerWithGovernorate));
+    } catch (error) {
+      console.error("Error creating photographer:", error);
       return res.status(500).json({ error: "Internal Server Error" });
     }
   }
@@ -643,8 +705,8 @@ router.put(
 
       const nextRole =
         role !== undefined
-          ? role === "super_admin"
-            ? "super_admin"
+          ? ["super_admin", "admin", "photographer"].includes(role)
+            ? role
             : "admin"
           : admin.role;
 
