@@ -44,6 +44,7 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
       mentions,
       mediaUrl: bodyMediaUrl,
       mediaType,
+      replyToMessageId,
     } = req.body;
 
     const uploadedMediaUrl = req.file ? `/uploads/${req.file.filename}` : (bodyMediaUrl || null);
@@ -55,6 +56,7 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
       mediaUrl: uploadedMediaUrl,
       mediaType: mediaType || req.file?.mimetype,
       mentions,
+      replyToMessageId,
     });
 
     const io = req.app.get("io");

@@ -98,6 +98,8 @@ MonthlySquadSlot.belongsTo(User, { foreignKey: "userId", as: "user" });
 
 User.hasMany(Message, { foreignKey: "userId", as: "messages", onDelete: "CASCADE" });
 Message.belongsTo(User, { foreignKey: "userId", as: "user" });
+Message.belongsTo(Message, { foreignKey: "replyToMessageId", as: "replyTo" });
+Message.hasMany(Message, { foreignKey: "replyToMessageId", as: "replies" });
 
 User.hasMany(PlayerOfMonth, { foreignKey: "userId", as: "playerOfMonths", onDelete: "CASCADE" });
 PlayerOfMonth.belongsTo(User, { foreignKey: "userId", as: "user" });

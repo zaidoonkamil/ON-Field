@@ -51,6 +51,14 @@ const Message = sequelize.define("Message", {
         allowNull: false,
         defaultValue: "text",
     },
+    replyToMessageId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+            model: "Messages",
+            key: "id"
+        }
+    },
     mentions: {
         type: DataTypes.TEXT("long"),
         allowNull: true,

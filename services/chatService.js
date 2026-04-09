@@ -53,6 +53,19 @@ class ChatService {
         allowNull: true,
       });
     }
+
+    if (!tableDefinition.replyToMessageId) {
+      await queryInterface.addColumn(tableName, "replyToMessageId", {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: "Messages",
+          key: "id",
+        },
+        onDelete: "SET NULL",
+        onUpdate: "CASCADE",
+      });
+    }
   }
 
   parseMentions(value) {
@@ -163,11 +176,51 @@ class ChatService {
     return "رسالة جديدة";
   }
 
+  getMessageIncludes() {
+    return [
+      {
+        model: User,
+        as: "user",
+        attributes: ["id", "name", "image", "position", "role"],
+      },
+      {
+        model: Message,
+        as: "replyTo",
+        attributes: ["id", "content", "mediaUrl", "mediaType", "createdAt"],
+        include: [
+          {
+            model: User,
+            as: "user",
+            attributes: ["id", "name", "image", "position", "role"],
+          },
+        ],
+      },
+    ];
+  }
+
   formatMessage(message) {
     const plainMessage = typeof message.toJSON === "function" ? message.toJSON() : message;
     const mentions = Array.isArray(plainMessage.mentions)
       ? plainMessage.mentions
       : this.parseMentions(plainMessage.mentions);
+    const replyTo = plainMessage.replyTo
+      ? {
+          id: Number(plainMessage.replyTo.id) || 0,
+          content: plainMessage.replyTo.content || "",
+          mediaUrl: plainMessage.replyTo.mediaUrl || null,
+          mediaType: plainMessage.replyTo.mediaType || (plainMessage.replyTo.mediaUrl ? this.resolveMediaType("", plainMessage.replyTo.mediaUrl) : "text"),
+          createdAt: plainMessage.replyTo.createdAt || null,
+          user: plainMessage.replyTo.user
+            ? {
+                id: Number(plainMessage.replyTo.user.id) || 0,
+                name: plainMessage.replyTo.user.name || "",
+                image: plainMessage.replyTo.user.image || "",
+                position: plainMessage.replyTo.user.position || "",
+                role: plainMessage.replyTo.user.role || "user",
+              }
+            : null,
+        }
+      : null;
 
     return {
       ...plainMessage,
@@ -175,6 +228,7 @@ class ChatService {
       mediaUrl: plainMessage.mediaUrl || null,
       mediaType: plainMessage.mediaType || (plainMessage.mediaUrl ? this.resolveMediaType("", plainMessage.mediaUrl) : "text"),
       mentions,
+      replyTo,
     };
   }
 
@@ -233,6 +287,13 @@ class ChatService {
         ? this.resolveMediaType(payload.mediaType, mediaUrl)
         : "text";
       const mentions = this.normalizeMentions(payload.mentions, messageContent);
+      const rawReplyToMessageId = payload.replyToMessageId;
+      const replyToMessageId =
+        rawReplyToMessageId === undefined ||
+        rawReplyToMessageId === null ||
+        `${rawReplyToMessageId}`.trim() === ""
+          ? null
+          : Number(rawReplyToMessageId);
 
       if (!userId) {
         throw new Error("userId مطلوب لإرسال الرسالة");
@@ -242,6 +303,21 @@ class ChatService {
         throw new Error("لا يمكن إرسال رسالة فارغة");
       }
 
+      if (replyToMessageId !== null) {
+        if (!Number.isInteger(replyToMessageId) || replyToMessageId <= 0) {
+          throw new Error("replyToMessageId is invalid");
+        }
+
+        const repliedMessage = await Message.findByPk(replyToMessageId);
+        if (!repliedMessage) {
+          throw new Error("Reply target message was not found");
+        }
+
+        if ((repliedMessage.room || "main_chat") !== targetRoom) {
+          throw new Error("Reply target belongs to a different room");
+        }
+      }
+
       const message = await Message.create({
         userId,
         content: messageContent,
@@ -249,18 +325,13 @@ class ChatService {
         mediaUrl,
         mediaType: resolvedMediaType,
         mentions,
+        replyToMessageId,
       });
 
       await this.trimRoomMessages(targetRoom, MAX_MESSAGES_PER_ROOM);
 
       const savedMessage = await Message.findByPk(message.id, {
-        include: [
-          {
-            model: User,
-            as: "user",
-            attributes: ["id", "name", "image", "position", "role"],
-          },
-        ],
+        include: this.getMessageIncludes(),
       });
 
       return this.formatMessage(savedMessage);
@@ -291,13 +362,7 @@ class ChatService {
       const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), MAX_MESSAGES_PER_ROOM);
       const messages = await Message.findAll({
         where: { room },
-        include: [
-          {
-            model: User,
-            as: "user",
-            attributes: ["id", "name", "image", "position", "role"],
-          },
-        ],
+        include: this.getMessageIncludes(),
         order: [["createdAt", "DESC"]],
         limit: safeLimit,
       });
@@ -513,13 +578,7 @@ class ChatService {
       await this.ensureMessageSchema();
 
       const message = await Message.findByPk(messageId, {
-        include: [
-          {
-            model: User,
-            as: "user",
-            attributes: ["id", "name", "image", "position", "role"],
-          },
-        ],
+        include: this.getMessageIncludes(),
       });
 
       if (!message) {
@@ -561,13 +620,7 @@ class ChatService {
       await message.save();
 
       const updatedMessage = await Message.findByPk(messageId, {
-        include: [
-          {
-            model: User,
-            as: "user",
-            attributes: ["id", "name", "image", "position", "role"],
-          },
-        ],
+        include: this.getMessageIncludes(),
       });
 
       return this.formatMessage(updatedMessage);

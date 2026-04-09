@@ -68,6 +68,7 @@ const setupSocketHandlers = (io) => {
           mediaUrl = null,
           mediaType = null,
           mentions = [],
+          replyToMessageId = null,
         } = data;
 
         socket.join(room);
@@ -79,6 +80,7 @@ const setupSocketHandlers = (io) => {
           mediaUrl,
           mediaType,
           mentions,
+          replyToMessageId,
         });
 
         io.to(room).emit("receive_message", savedMessage);
