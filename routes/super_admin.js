@@ -128,6 +128,21 @@ router.get("/governorates/available", async (req, res) => {
   }
 });
 
+router.get("/governorates/public-active", async (req, res) => {
+  try {
+    const governorates = await Governorate.findAll({
+      where: { isActive: true },
+      attributes: ["id", "name", "isActive"],
+      order: [["name", "ASC"]],
+    });
+
+    return res.status(200).json(governorates.map(mapGovernorate));
+  } catch (error) {
+    console.error("Error fetching public governorates:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 router.post(
   "/governorates",
   authenticateToken,
