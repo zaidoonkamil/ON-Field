@@ -66,6 +66,35 @@ class ChatService {
         onUpdate: "CASCADE",
       });
     }
+
+    if (!tableDefinition.isPinned) {
+      await queryInterface.addColumn(tableName, "isPinned", {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      });
+    }
+
+    if (!tableDefinition.pinnedAt) {
+      await queryInterface.addColumn(tableName, "pinnedAt", {
+        type: DataTypes.DATE,
+        allowNull: true,
+        defaultValue: null,
+      });
+    }
+
+    if (!tableDefinition.pinnedByUserId) {
+      await queryInterface.addColumn(tableName, "pinnedByUserId", {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: "Users",
+          key: "id",
+        },
+        onDelete: "SET NULL",
+        onUpdate: "CASCADE",
+      });
+    }
   }
 
   parseMentions(value) {
@@ -195,6 +224,11 @@ class ChatService {
           },
         ],
       },
+      {
+        model: User,
+        as: "pinnedBy",
+        attributes: ["id", "name", "image", "position", "role"],
+      },
     ];
   }
 
@@ -221,6 +255,15 @@ class ChatService {
             : null,
         }
       : null;
+    const pinnedBy = plainMessage.pinnedBy
+      ? {
+          id: Number(plainMessage.pinnedBy.id) || 0,
+          name: plainMessage.pinnedBy.name || "",
+          image: plainMessage.pinnedBy.image || "",
+          position: plainMessage.pinnedBy.position || "",
+          role: plainMessage.pinnedBy.role || "user",
+        }
+      : null;
 
     return {
       ...plainMessage,
@@ -229,6 +272,9 @@ class ChatService {
       mediaType: plainMessage.mediaType || (plainMessage.mediaUrl ? this.resolveMediaType("", plainMessage.mediaUrl) : "text"),
       mentions,
       replyTo,
+      isPinned: plainMessage.isPinned === true,
+      pinnedAt: plainMessage.pinnedAt || null,
+      pinnedBy,
     };
   }
 
@@ -554,6 +600,18 @@ class ChatService {
     return [...new Set([...directMentionIds, ...resolvedMentionIds])];
   }
 
+  async getPinnedMessage(room = "main_chat") {
+    await this.ensureMessageSchema();
+
+    const pinnedMessage = await Message.findOne({
+      where: { room, isPinned: true },
+      include: this.getMessageIncludes(),
+      order: [["pinnedAt", "DESC"], ["updatedAt", "DESC"]],
+    });
+
+    return pinnedMessage ? this.formatMessage(pinnedMessage) : null;
+  }
+
   async notifyRoomUsers({ message, sender }) {
     const senderId = Number(sender?.id ?? message?.userId);
     if (!Number.isInteger(senderId) || senderId <= 0) {
@@ -628,6 +686,51 @@ class ChatService {
       console.error("Error updating message:", error);
       throw error;
     }
+  }
+
+  async pinMessage({ messageId, pinnedByUserId }) {
+    await this.ensureMessageSchema();
+
+    const message = await Message.findByPk(messageId);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    await Message.update(
+      { isPinned: false, pinnedAt: null, pinnedByUserId: null },
+      { where: { room: message.room, isPinned: true } }
+    );
+
+    message.isPinned = true;
+    message.pinnedAt = new Date();
+    message.pinnedByUserId = pinnedByUserId || null;
+    await message.save();
+
+    const pinnedMessage = await Message.findByPk(message.id, {
+      include: this.getMessageIncludes(),
+    });
+
+    return this.formatMessage(pinnedMessage);
+  }
+
+  async unpinMessage({ room = "main_chat" }) {
+    await this.ensureMessageSchema();
+
+    const pinnedMessage = await Message.findOne({
+      where: { room, isPinned: true },
+      include: this.getMessageIncludes(),
+    });
+
+    if (!pinnedMessage) {
+      return null;
+    }
+
+    pinnedMessage.isPinned = false;
+    pinnedMessage.pinnedAt = null;
+    pinnedMessage.pinnedByUserId = null;
+    await pinnedMessage.save();
+
+    return this.formatMessage(pinnedMessage);
   }
 }
 

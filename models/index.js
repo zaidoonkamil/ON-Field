@@ -100,6 +100,8 @@ User.hasMany(Message, { foreignKey: "userId", as: "messages", onDelete: "CASCADE
 Message.belongsTo(User, { foreignKey: "userId", as: "user" });
 Message.belongsTo(Message, { foreignKey: "replyToMessageId", as: "replyTo" });
 Message.hasMany(Message, { foreignKey: "replyToMessageId", as: "replies" });
+User.hasMany(Message, { foreignKey: "pinnedByUserId", as: "pinnedMessages", onDelete: "SET NULL" });
+Message.belongsTo(User, { foreignKey: "pinnedByUserId", as: "pinnedBy" });
 
 User.hasMany(PlayerOfMonth, { foreignKey: "userId", as: "playerOfMonths", onDelete: "CASCADE" });
 PlayerOfMonth.belongsTo(User, { foreignKey: "userId", as: "user" });

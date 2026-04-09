@@ -1,10 +1,27 @@
 const chatService = require("./chatService");
+const { User } = require("../models");
 
 // تخزين المستخدمين المتصلين
 const connectedUsers = {};
 
 const getUsersListByRoom = (room = "main_chat") => {
   return Object.values(connectedUsers).filter((user) => (user.room || "main_chat") === room);
+};
+
+const ensureAdminPermission = async (userId) => {
+  const user = await User.findByPk(Number(userId), {
+    attributes: ["id", "role"],
+  });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  if (!["admin", "super_admin"].includes(user.role)) {
+    throw new Error("Only admins can pin messages");
+  }
+
+  return user;
 };
 
 /**
@@ -129,6 +146,42 @@ const setupSocketHandlers = (io) => {
         console.log("✏️ تم تحديث الرسالة:", messageId);
       } catch (error) {
         console.error("خطأ في تحديث الرسالة:", error);
+      }
+    });
+
+    socket.on("pin_message", async (data = {}) => {
+      try {
+        const { messageId, userId } = data;
+        await ensureAdminPermission(userId);
+        const pinnedMessage = await chatService.pinMessage({
+          messageId: Number(messageId),
+          pinnedByUserId: Number(userId),
+        });
+
+        io.to(pinnedMessage.room || "main_chat").emit(
+          "pinned_message_updated",
+          pinnedMessage
+        );
+      } catch (error) {
+        console.error("Ø®Ø·Ø£ ÙÙŠ ØªØ«Ø¨ÙŠØª Ø§Ù„Ø±Ø³Ø§Ù„Ø©:", error);
+        socket.emit("error", {
+          message: error.message || "Ø®Ø·Ø£ ÙÙŠ ØªØ«Ø¨ÙŠØª Ø§Ù„Ø±Ø³Ø§Ù„Ø©",
+        });
+      }
+    });
+
+    socket.on("unpin_message", async (data = {}) => {
+      try {
+        const { userId, room = "main_chat" } = data;
+        await ensureAdminPermission(userId);
+        await chatService.unpinMessage({ room });
+
+        io.to(room).emit("pinned_message_updated", null);
+      } catch (error) {
+        console.error("Ø®Ø·Ø£ ÙÙŠ Ø¥Ù„ØºØ§Ø¡ ØªØ«Ø¨ÙŠØª Ø§Ù„Ø±Ø³Ø§Ù„Ø©:", error);
+        socket.emit("error", {
+          message: error.message || "Ø®Ø·Ø£ ÙÙŠ Ø¥Ù„ØºØ§Ø¡ ØªØ«Ø¨ÙŠØª Ø§Ù„Ø±Ø³Ø§Ù„Ø©",
+        });
       }
     });
 

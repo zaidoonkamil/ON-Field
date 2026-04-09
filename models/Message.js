@@ -51,6 +51,24 @@ const Message = sequelize.define("Message", {
         allowNull: false,
         defaultValue: "text",
     },
+    isPinned: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+    },
+    pinnedAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        defaultValue: null,
+    },
+    pinnedByUserId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+            model: "Users",
+            key: "id"
+        }
+    },
     replyToMessageId: {
         type: DataTypes.INTEGER,
         allowNull: true,

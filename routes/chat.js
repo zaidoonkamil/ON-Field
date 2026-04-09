@@ -3,6 +3,23 @@ const router = express.Router();
 const chatService = require("../services/chatService");
 const upload = require("../middlewares/uploads");
 const { connectedUsers } = require("../services/socketService");
+const { User } = require("../models");
+
+async function ensureAdminPermission(userId) {
+  const user = await User.findByPk(Number(userId), {
+    attributes: ["id", "role"],
+  });
+
+  if (!user) {
+    throw { status: 404, message: "User not found" };
+  }
+
+  if (!["admin", "super_admin"].includes(user.role)) {
+    throw { status: 403, message: "Only admins can pin messages" };
+  }
+
+  return user;
+}
 
 router.post("/api/chat/upload", upload.single("file"), async (req, res) => {
   try {
@@ -118,16 +135,94 @@ router.get("/api/chat/messages", async (req, res) => {
   try {
     const room = req.query.room || "main_chat";
     const limit = req.query.limit || 50;
-    const messages = await chatService.getAllMessages(room, parseInt(limit, 10));
+    const [messages, pinnedMessage] = await Promise.all([
+      chatService.getAllMessages(room, parseInt(limit, 10)),
+      chatService.getPinnedMessage(room),
+    ]);
 
     return res.status(200).json({
       success: true,
       messages,
+      pinnedMessage,
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
       message: "خطأ في جلب الرسائل",
+      error: error.message,
+    });
+  }
+});
+
+router.patch("/api/chat/messages/:messageId/pin", async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { userId } = req.body;
+
+    await ensureAdminPermission(userId);
+    const pinnedMessage = await chatService.pinMessage({
+      messageId: Number(messageId),
+      pinnedByUserId: Number(userId),
+    });
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(pinnedMessage.room || "main_chat").emit(
+        "pinned_message_updated",
+        pinnedMessage
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Message pinned successfully",
+      data: pinnedMessage,
+    });
+  } catch (error) {
+    if (error?.status) {
+      return res.status(error.status).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Error while pinning message",
+      error: error.message,
+    });
+  }
+});
+
+router.delete("/api/chat/pin", async (req, res) => {
+  try {
+    const room = req.body.room || req.query.room || "main_chat";
+    const userId = req.body.userId || req.query.userId;
+
+    await ensureAdminPermission(userId);
+    const unpinnedMessage = await chatService.unpinMessage({ room });
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(room).emit("pinned_message_updated", null);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Pinned message cleared successfully",
+      data: unpinnedMessage,
+    });
+  } catch (error) {
+    if (error?.status) {
+      return res.status(error.status).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Error while clearing pinned message",
       error: error.message,
     });
   }
@@ -150,6 +245,9 @@ router.delete("/api/chat/messages/:messageId", async (req, res) => {
       io.to(deletedMessage.room || "main_chat").emit("message_deleted", {
         messageId: Number(messageId),
       });
+      if (deletedMessage.isPinned) {
+        io.to(deletedMessage.room || "main_chat").emit("pinned_message_updated", null);
+      }
     }
 
     return res.status(200).json({
