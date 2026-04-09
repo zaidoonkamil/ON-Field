@@ -73,7 +73,7 @@ const formatPrice = (value) => {
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
-router.post("/games", upload.none(), authenticateToken, async (req, res) => {
+router.post("/games", upload.single("stadiumImage"), authenticateToken, async (req, res) => {
   try {
     if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
       return res.status(403).json({ error: "Not allowed" });
@@ -96,6 +96,7 @@ router.post("/games", upload.none(), authenticateToken, async (req, res) => {
 
     const game = await Game.create({
       stadiumName,
+      stadiumImage: req.file?.filename || null,
       startsAt,
       formationSize: String(formationSize),
       status: "open",

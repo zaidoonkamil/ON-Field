@@ -11,6 +11,10 @@ const Game = sequelize.define("Game", {
     type: DataTypes.STRING, 
     allowNull: false 
    },
+  stadiumImage: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
   startsAt: { 
     type: DataTypes.DATE, 
     allowNull: false 

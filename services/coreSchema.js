@@ -88,6 +88,11 @@ async function ensureCoreSchema() {
         });
       }
 
+      await ensureColumn(queryInterface, Game.getTableName(), "stadiumImage", {
+        type: DataTypes.STRING,
+        allowNull: true,
+      });
+
       const [baghdad] = await Governorate.findOrCreate({
         where: { name: BAGHDAD_NAME },
         defaults: { isActive: true },
