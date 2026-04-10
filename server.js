@@ -21,6 +21,7 @@ const chatService = require("./services/chatService.js");
 const { ensureUserDeviceSchema } = require("./services/notifications.js");
 const { ensureCoreSchema } = require("./services/coreSchema.js");
 const { setupSocketHandlers } = require("./services/socketService.js");
+const { startWhatsAppAutoInit } = require("./services/waSender.js");
 const playerOfMonthRoutes = require("./routes/playerOfMonth");
 
 const app = express();
@@ -62,6 +63,7 @@ sequelize.sync({ force: false })
     await chatService.enforceMessageLimitForAllRooms();
     startCleanupJob();
     startGameReminderJob();
+    startWhatsAppAutoInit();
   }).catch((err) => console.error("❌ Error syncing database:", err));
 
 
