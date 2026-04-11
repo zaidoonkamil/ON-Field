@@ -196,7 +196,7 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
       await Post.create({
         userId: null,
         governorateId: game.governorateId || null,
-        text: game.stadiumName || null,
+        text: `صور وفيديوهات مباراة ${game.stadiumName || ""}`,
         media: { images: [], videos: [] },
       });
     }
