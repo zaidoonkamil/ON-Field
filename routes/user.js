@@ -17,6 +17,8 @@ const {
   getGovernorateScope,
   applyGovernorateScope,
 } = require("../services/accessScope");
+const { createOtp, verifyOtp } = require("../services/otpService");
+const { sendWhatsAppText } = require("../services/waSender");
 
 const router = express.Router();
 const upload = multer();
@@ -231,6 +233,76 @@ router.post("/login", upload.none(), async (req, res) => {
   } catch (err) {
     console.error("Error logging in:", err);
     return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.post("/forgot-password/request", upload.none(), async (req, res) => {
+  try {
+    let { phone } = req.body;
+    phone = normalizePhone(phone);
+
+    if (!phone) {
+      return res.status(400).json({ error: "Phone is required" });
+    }
+
+    const user = await User.findOne({ where: { phone } });
+    if (!user) {
+      return res.status(404).json({ error: "Phone number is not registered" });
+    }
+
+    const otp = createOtp(phone);
+    const message = `رمز إعادة تعيين كلمة السر هو: ${otp.code}\nصالح لمدة ${Math.floor(otp.expiresInSeconds / 60)} دقائق.`;
+
+    await sendWhatsAppText(otp.phone, message);
+
+    return res.status(200).json({
+      success: true,
+      phone: otp.phone,
+      expiresInSeconds: otp.expiresInSeconds,
+      retryAfterSeconds: otp.retryAfterSeconds,
+      message: "Password reset OTP sent successfully",
+    });
+  } catch (error) {
+    console.error("Forgot password OTP request error:", error.message);
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+router.post("/forgot-password/reset", upload.none(), async (req, res) => {
+  try {
+    let { phone, code, password } = req.body;
+    phone = normalizePhone(phone);
+    password = String(password || "").trim();
+
+    if (!phone || !code || !password) {
+      return res.status(400).json({
+        error: "phone, code and password are required",
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        error: "Password must be at least 6 characters",
+      });
+    }
+
+    const result = verifyOtp(phone, code);
+    const user = await User.findOne({ where: { phone: result.phone } });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    user.password = await bcrypt.hash(password, saltRounds);
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successfully",
+    });
+  } catch (error) {
+    console.error("Forgot password reset error:", error.message);
+    return res.status(400).json({ error: error.message });
   }
 });
 
