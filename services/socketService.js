@@ -102,17 +102,33 @@ const setupSocketHandlers = (io) => {
 
         io.to(room).emit("receive_message", savedMessage);
 
-        await chatService.notifyRoomUsers({
-          message: savedMessage,
-          sender: savedMessage.user,
-        });
+        const [roomNotificationResult, mentionNotificationResult] =
+          await Promise.allSettled([
+            chatService.notifyRoomUsers({
+              message: savedMessage,
+              sender: savedMessage.user,
+            }),
+            chatService.notifyMentionedUsers({
+              message: savedMessage,
+              sender: savedMessage.user,
+              io,
+              connectedUsersMap: connectedUsers,
+            }),
+          ]);
 
-        await chatService.notifyMentionedUsers({
-          message: savedMessage,
-          sender: savedMessage.user,
-          io,
-          connectedUsersMap: connectedUsers,
-        });
+        if (roomNotificationResult.status === "rejected") {
+          console.error(
+            "Error sending room chat notifications:",
+            roomNotificationResult.reason
+          );
+        }
+
+        if (mentionNotificationResult.status === "rejected") {
+          console.error(
+            "Error sending mention notifications:",
+            mentionNotificationResult.reason
+          );
+        }
 
         console.log("💬 رسالة جديدة من", savedMessage.user?.name || userId, ":", savedMessage.content || savedMessage.mediaType);
       } catch (error) {

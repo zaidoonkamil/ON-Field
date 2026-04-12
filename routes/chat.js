@@ -88,20 +88,32 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
     });
 
     setImmediate(async () => {
-      try {
-        await chatService.notifyRoomUsers({
-          message,
-          sender: message.user,
-        });
+      const [roomNotificationResult, mentionNotificationResult] =
+        await Promise.allSettled([
+          chatService.notifyRoomUsers({
+            message,
+            sender: message.user,
+          }),
+          chatService.notifyMentionedUsers({
+            message,
+            sender: message.user,
+            io,
+            connectedUsersMap: connectedUsers,
+          }),
+        ]);
 
-        await chatService.notifyMentionedUsers({
-          message,
-          sender: message.user,
-          io,
-          connectedUsersMap: connectedUsers,
-        });
-      } catch (notificationError) {
-        console.error("Error sending chat notifications:", notificationError);
+      if (roomNotificationResult.status === "rejected") {
+        console.error(
+          "Error sending room chat notifications:",
+          roomNotificationResult.reason
+        );
+      }
+
+      if (mentionNotificationResult.status === "rejected") {
+        console.error(
+          "Error sending mention notifications:",
+          mentionNotificationResult.reason
+        );
       }
     });
   } catch (error) {
