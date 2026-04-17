@@ -458,6 +458,7 @@ router.post("/games/:id/unbook", upload.none(), authenticateToken, async (req, r
   try {
     const gameId = Number(req.params.id);
     const userId = Number(req.body.userId);
+    const { team, code } = req.body;
 
     if (!userId || !Number.isInteger(userId)) {
         await t.rollback();
@@ -465,7 +466,10 @@ router.post("/games/:id/unbook", upload.none(), authenticateToken, async (req, r
       }
 
     const slot = await GameSlot.findOne({
-      where: { gameId, userId },
+      where:
+        team && code
+          ? { gameId, userId, team, code }
+          : { gameId, userId },
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
