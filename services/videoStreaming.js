@@ -28,6 +28,12 @@ async function fileExists(targetPath) {
   }
 }
 
+async function hasUploadedSourceFile(fileName) {
+  const normalizedFileName = toPosixPath(fileName).trim();
+  if (!normalizedFileName) return false;
+  return fileExists(path.join(uploadsRoot, normalizedFileName));
+}
+
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpegBinary, args, {
@@ -164,6 +170,8 @@ async function generateVariant({
     inputPath,
     "-vf",
     scaleFilter,
+    "-pix_fmt",
+    "yuv420p",
     "-c:a",
     "aac",
     "-ar",
@@ -173,9 +181,11 @@ async function generateVariant({
     "-c:v",
     "libx264",
     "-profile:v",
-    "main",
+    "high",
     "-crf",
     "21",
+    "-preset",
+    "veryfast",
     "-sc_threshold",
     "0",
     "-g",
@@ -293,6 +303,20 @@ async function processQueuedVideoJob(job) {
   const { postId, videoId, fileName } = job;
 
   try {
+    const sourceExists = await hasUploadedSourceFile(fileName);
+    if (!sourceExists) {
+      await updatePostVideoEntry(postId, videoId, (current) => ({
+        ...current,
+        processing: false,
+        status: "missing_source",
+      }));
+
+      console.warn(
+        `Skipping adaptive processing for post ${postId}, video ${videoId}: source file not found (${fileName})`
+      );
+      return;
+    }
+
     const adaptivePath = await createAdaptiveVideoFromUpload(fileName);
 
     await updatePostVideoEntry(postId, videoId, (current) => ({
@@ -363,6 +387,7 @@ module.exports = {
   createAdaptiveVideoFromUpload,
   createPostVideoEntry,
   getPostVideoRemovalKey,
+  hasUploadedSourceFile,
   matchesVideoRemovalKey,
   normalizePostVideoEntry,
   normalizePostVideoList,

@@ -1,5 +1,6 @@
 const { Post } = require("../models");
 const {
+  hasUploadedSourceFile,
   normalizePostVideoEntry,
   normalizePostVideoList,
   queuePostVideoProcessing,
@@ -39,6 +40,17 @@ async function migrateLegacyPostVideosToAdaptiveStreaming() {
         (current.processing || current.status === "pending");
 
       if (needsProcessing) {
+        const sourceExists = await hasUploadedSourceFile(current.original);
+        if (!sourceExists) {
+          normalizedVideos[index] = {
+            ...current,
+            processing: false,
+            status: "missing_source",
+          };
+          changed = true;
+          continue;
+        }
+
         if (
           queuePostVideoProcessing({
             postId: post.id,
