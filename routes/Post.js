@@ -14,6 +14,10 @@ const {
 } = require("../services/accessScope");
 const path = require("path");
 const fs = require("fs/promises");
+const {
+  createAdaptiveVideoFromUpload,
+  removeAdaptiveVideoFiles,
+} = require("../services/videoStreaming");
 
 const MAX_POSTS = 15;
 
@@ -66,6 +70,11 @@ function parseMediaList(value) {
 
 async function safeDeleteFile(filename) {
   try {
+    const deletedAdaptiveVideo = await removeAdaptiveVideoFiles(filename);
+    if (deletedAdaptiveVideo) {
+      return;
+    }
+
     const filePath = path.join(__dirname, "..", "uploads", filename);
     await fs.unlink(filePath);
   } catch (_) {}
@@ -85,7 +94,20 @@ router.post(
     for (const f of req.files || []) {
       const main = (f.mimetype || "").split("/")[0];
       if (main === "image") images.push(f.filename);
-      else if (main === "video") videos.push(f.filename);
+      else if (main === "video") {
+        try {
+          const adaptiveVideoPath = await createAdaptiveVideoFromUpload(
+            f.filename
+          );
+          videos.push(adaptiveVideoPath);
+        } catch (videoError) {
+          console.error(
+            `Adaptive video generation failed for ${f.filename}:`,
+            videoError.message
+          );
+          videos.push(f.filename);
+        }
+      }
       else {
         return res.status(400).json({ error: "Only images and videos are allowed" });
       }
@@ -179,7 +201,20 @@ router.put(
       for (const f of req.files || []) {
         const main = (f.mimetype || "").split("/")[0];
         if (main === "image") newImages.push(f.filename);
-        else if (main === "video") newVideos.push(f.filename);
+        else if (main === "video") {
+          try {
+            const adaptiveVideoPath = await createAdaptiveVideoFromUpload(
+              f.filename
+            );
+            newVideos.push(adaptiveVideoPath);
+          } catch (videoError) {
+            console.error(
+              `Adaptive video generation failed for ${f.filename}:`,
+              videoError.message
+            );
+            newVideos.push(f.filename);
+          }
+        }
         else {
           return res.status(400).json({ error: "Only images and videos are allowed" });
         }

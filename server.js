@@ -22,6 +22,7 @@ const { ensureUserDeviceSchema } = require("./services/notifications.js");
 const { ensureCoreSchema } = require("./services/coreSchema.js");
 const { setupSocketHandlers } = require("./services/socketService.js");
 const { startWhatsAppAutoInit } = require("./services/waSender.js");
+const { startPostVideoMigration } = require("./services/migratePostVideos.js");
 const playerOfMonthRoutes = require("./routes/playerOfMonth");
 
 const app = express();
@@ -64,6 +65,7 @@ sequelize.sync({ force: false })
     startCleanupJob();
     startGameReminderJob();
     startWhatsAppAutoInit();
+    startPostVideoMigration();
   }).catch((err) => console.error("❌ Error syncing database:", err));
 
 
