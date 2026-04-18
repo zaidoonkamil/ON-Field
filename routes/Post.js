@@ -15,7 +15,10 @@ const {
 const path = require("path");
 const fs = require("fs/promises");
 const {
-  createAdaptiveVideoFromUpload,
+  createPostVideoEntry,
+  matchesVideoRemovalKey,
+  normalizePostVideoList,
+  queuePostVideoProcessing,
   removeAdaptiveVideoFiles,
 } = require("../services/videoStreaming");
 
@@ -23,7 +26,7 @@ const MAX_POSTS = 15;
 
 async function deletePostWithFiles(post) {
   const images = post.media?.images || [];
-  const videos = post.media?.videos || [];
+  const videos = normalizePostVideoList(post.media?.videos);
 
   for (const f of [...images, ...videos]) {
     await safeDeleteFile(f);
@@ -70,10 +73,20 @@ function parseMediaList(value) {
 
 async function safeDeleteFile(filename) {
   try {
-    const deletedAdaptiveVideo = await removeAdaptiveVideoFiles(filename);
-    if (deletedAdaptiveVideo) {
+    if (filename && typeof filename === "object" && !Array.isArray(filename)) {
+      if (filename.adaptive) {
+        await removeAdaptiveVideoFiles(filename.adaptive);
+      }
+
+      if (filename.original) {
+        const originalPath = path.join(__dirname, "..", "uploads", filename.original);
+        await fs.unlink(originalPath).catch(() => {});
+      }
       return;
     }
+
+    const deletedAdaptiveVideo = await removeAdaptiveVideoFiles(filename);
+    if (deletedAdaptiveVideo) return;
 
     const filePath = path.join(__dirname, "..", "uploads", filename);
     await fs.unlink(filePath);
@@ -95,20 +108,8 @@ router.post(
       const main = (f.mimetype || "").split("/")[0];
       if (main === "image") images.push(f.filename);
       else if (main === "video") {
-        try {
-          const adaptiveVideoPath = await createAdaptiveVideoFromUpload(
-            f.filename
-          );
-          videos.push(adaptiveVideoPath);
-        } catch (videoError) {
-          console.error(
-            `Adaptive video generation failed for ${f.filename}:`,
-            videoError.message
-          );
-          videos.push(f.filename);
-        }
-      }
-      else {
+        videos.push(createPostVideoEntry(f.filename));
+      } else {
         return res.status(400).json({ error: "Only images and videos are allowed" });
       }
     }
@@ -124,6 +125,14 @@ router.post(
       text: text || null,
       media: { images, videos },
     });
+
+    for (const video of videos) {
+      queuePostVideoProcessing({
+        postId: post.id,
+        videoId: video.id,
+        fileName: video.original,
+      });
+    }
 
     await enforceMaxPosts(governorateId);
     return res.status(201).json(post);
@@ -177,7 +186,7 @@ router.put(
       }
 
       const currentImages = post.media?.images || [];
-      const currentVideos = post.media?.videos || [];
+      const currentVideos = normalizePostVideoList(post.media?.videos);
       const removeImages = parseMediaList(req.body.removeImages);
       const removeVideos = parseMediaList(req.body.removeVideos);
 
@@ -188,8 +197,8 @@ router.put(
         return res.status(400).json({ error: "Image to remove does not exist" });
       }
 
-      const invalidRemoveVideo = removeVideos.find(
-        (name) => !currentVideos.includes(name)
+      const invalidRemoveVideo = removeVideos.find((name) =>
+        !currentVideos.some((video) => matchesVideoRemovalKey(video, name))
       );
       if (invalidRemoveVideo) {
         return res.status(400).json({ error: "Video to remove does not exist" });
@@ -202,27 +211,22 @@ router.put(
         const main = (f.mimetype || "").split("/")[0];
         if (main === "image") newImages.push(f.filename);
         else if (main === "video") {
-          try {
-            const adaptiveVideoPath = await createAdaptiveVideoFromUpload(
-              f.filename
-            );
-            newVideos.push(adaptiveVideoPath);
-          } catch (videoError) {
-            console.error(
-              `Adaptive video generation failed for ${f.filename}:`,
-              videoError.message
-            );
-            newVideos.push(f.filename);
-          }
-        }
-        else {
+          newVideos.push(createPostVideoEntry(f.filename));
+        } else {
           return res.status(400).json({ error: "Only images and videos are allowed" });
         }
       }
 
       post.media = {
         images: currentImages.filter((name) => !removeImages.includes(name)).concat(newImages),
-        videos: currentVideos.filter((name) => !removeVideos.includes(name)).concat(newVideos),
+        videos: currentVideos
+          .filter(
+            (video) =>
+              !removeVideos.some((removalKey) =>
+                matchesVideoRemovalKey(video, removalKey)
+              )
+          )
+          .concat(newVideos),
       };
 
       if (text !== undefined) {
@@ -232,7 +236,22 @@ router.put(
       await post.save();
 
       for (const f of [...removeImages, ...removeVideos]) {
-        await safeDeleteFile(f);
+        if (removeVideos.includes(f)) {
+          const matchedVideo = currentVideos.find((video) =>
+            matchesVideoRemovalKey(video, f)
+          );
+          await safeDeleteFile(matchedVideo || f);
+        } else {
+          await safeDeleteFile(f);
+        }
+      }
+
+      for (const video of newVideos) {
+        queuePostVideoProcessing({
+          postId: post.id,
+          videoId: video.id,
+          fileName: video.original,
+        });
       }
 
       return res.status(200).json(post);
@@ -260,7 +279,7 @@ router.delete(
     }
 
     const images = post.media?.images || [];
-    const videos = post.media?.videos || [];
+    const videos = normalizePostVideoList(post.media?.videos);
 
     for (const f of [...images, ...videos]) {
       await safeDeleteFile(f);
