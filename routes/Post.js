@@ -97,7 +97,7 @@ router.post(
   "/posts",
   authenticateToken,
   requireRoles("admin", "super_admin", "photographer"),
-  uploadPostMedia.array("media", 100),
+  uploadPostMedia.array("media", 300),
   async (req, res) => {
   try {
     const { text } = req.body;
@@ -171,7 +171,7 @@ router.put(
   "/posts/:id",
   authenticateToken,
   requireRoles("admin", "super_admin", "photographer"),
-  uploadPostMedia.array("media", 100),
+  uploadPostMedia.array("media", 300),
   async (req, res) => {
     try {
       const { id } = req.params;
