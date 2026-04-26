@@ -57,7 +57,6 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
     const {
       userId,
       content = "",
-      room = "main_chat",
       mentions,
       mediaUrl: bodyMediaUrl,
       mediaType,
@@ -69,7 +68,6 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
     const message = await chatService.saveMessage({
       userId,
       content,
-      room,
       mediaUrl: uploadedMediaUrl,
       mediaType: mediaType || req.file?.mimetype,
       mentions,
@@ -78,7 +76,7 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
 
     const io = req.app.get("io");
     if (io) {
-      io.to(room).emit("receive_message", message);
+      io.to(message.room || chatService.getDefaultRoom()).emit("receive_message", message);
     }
 
     res.status(201).json({
@@ -145,7 +143,9 @@ router.get("/api/chat/mentions", async (req, res) => {
 
 router.get("/api/chat/messages", async (req, res) => {
   try {
-    const room = req.query.room || "main_chat";
+    const room = req.query.userId
+      ? await chatService.getRoomForUserId(req.query.userId)
+      : (req.query.room || chatService.getDefaultRoom());
     const limit = req.query.limit || 50;
     const [messages, pinnedMessage] = await Promise.all([
       chatService.getAllMessages(room, parseInt(limit, 10)),
@@ -208,8 +208,10 @@ router.patch("/api/chat/messages/:messageId/pin", async (req, res) => {
 
 router.delete("/api/chat/pin", async (req, res) => {
   try {
-    const room = req.body.room || req.query.room || "main_chat";
     const userId = req.body.userId || req.query.userId;
+    const room = userId
+      ? await chatService.getRoomForUserId(userId)
+      : (req.body.room || req.query.room || chatService.getDefaultRoom());
 
     await ensureAdminPermission(userId);
     const unpinnedMessage = await chatService.unpinMessage({ room });

@@ -163,6 +163,7 @@ const sendNotificationToUser = async (userId, message, title = "Notification") =
 const sendChatNotificationToAllExcept = async ({
   senderUserId,
   excludedUserIds = [],
+  eligibleUserIds = null,
   message,
   title = "رسالة جديدة في الدردشة",
 }) => {
@@ -174,14 +175,39 @@ const sendChatNotificationToAllExcept = async ({
       .filter((value) => Number.isInteger(value) && value > 0)
   );
 
+  const normalizedEligibleUserIds = Array.isArray(eligibleUserIds)
+    ? eligibleUserIds
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    : null;
+
+  const userIdFilters = [];
+
+  if (excluded.size) {
+    userIdFilters.push({
+      [Op.notIn]: [...excluded],
+    });
+  }
+
+  if (normalizedEligibleUserIds) {
+    if (!normalizedEligibleUserIds.length) {
+      return;
+    }
+
+    userIdFilters.push({
+      [Op.in]: normalizedEligibleUserIds,
+    });
+  }
+
   const devices = await UserDevice.findAll({
     where: {
       chat_notifications_enabled: true,
-      ...(excluded.size
+      ...(userIdFilters.length
         ? {
-            user_id: {
-              [Op.notIn]: [...excluded],
-            },
+            user_id:
+              userIdFilters.length === 1
+                ? userIdFilters[0]
+                : { [Op.and]: userIdFilters },
           }
         : {}),
     },

@@ -3,9 +3,10 @@ const { User } = require("../models");
 
 // تخزين المستخدمين المتصلين
 const connectedUsers = {};
+const DEFAULT_ROOM = "main_chat";
 
-const getUsersListByRoom = (room = "main_chat") => {
-  return Object.values(connectedUsers).filter((user) => (user.room || "main_chat") === room);
+const getUsersListByRoom = (room = DEFAULT_ROOM) => {
+  return Object.values(connectedUsers).filter((user) => (user.room || DEFAULT_ROOM) === room);
 };
 
 const ensureAdminPermission = async (userId) => {
@@ -33,14 +34,15 @@ const setupSocketHandlers = (io) => {
     console.log("🔗 مستخدم جديد متصل:", socket.id);
 
     socket.on("join_room", (data = {}) => {
-      const room = data.room || "main_chat";
+      const room = data.room || DEFAULT_ROOM;
       socket.join(room);
     });
 
     // ======================== الاتصال والانضمام ========================
     socket.on("user_connected", async (userData = {}) => {
       try {
-        const { userId, name, image, position, role, room = "main_chat" } = userData;
+        const { userId, name, image, position, role } = userData;
+        const room = await chatService.getRoomForUserId(userId);
 
         // تخزين بيانات المستخدم
         connectedUsers[socket.id] = {
@@ -81,19 +83,18 @@ const setupSocketHandlers = (io) => {
         const {
           userId,
           content = "",
-          room = "main_chat",
           mediaUrl = null,
           mediaType = null,
           mentions = [],
           replyToMessageId = null,
         } = data;
 
+        const room = await chatService.getRoomForUserId(userId);
         socket.join(room);
 
         const savedMessage = await chatService.saveMessage({
           userId,
           content,
-          room,
           mediaUrl,
           mediaType,
           mentions,
@@ -140,11 +141,11 @@ const setupSocketHandlers = (io) => {
     // ======================== حذف الرسائل ========================
     socket.on("delete_message", async (data = {}) => {
       try {
-        const { messageId, room = "main_chat" } = data;
+        const { messageId } = data;
         const deletedMessage = await chatService.deleteMessage(messageId);
 
         if (deletedMessage) {
-          io.to(deletedMessage.room || room).emit("message_deleted", { messageId });
+          io.to(deletedMessage.room || DEFAULT_ROOM).emit("message_deleted", { messageId });
           console.log("🗑️ تم حذف الرسالة:", messageId);
         }
       } catch (error) {
@@ -188,7 +189,8 @@ const setupSocketHandlers = (io) => {
 
     socket.on("unpin_message", async (data = {}) => {
       try {
-        const { userId, room = "main_chat" } = data;
+        const { userId } = data;
+        const room = await chatService.getRoomForUserId(userId);
         await ensureAdminPermission(userId);
         await chatService.unpinMessage({ room });
 
@@ -203,12 +205,13 @@ const setupSocketHandlers = (io) => {
 
     // ======================== مؤشرات الكتابة ========================
     socket.on("user_typing", (data = {}) => {
-      const { userId, name, room = "main_chat" } = data;
+      const { userId, name, room = DEFAULT_ROOM } = data;
       socket.broadcast.to(room).emit("user_typing", { userId, name, room });
     });
 
-    socket.on("user_stop_typing", (data = {}) => {
-      const { userId, room = "main_chat" } = data;
+    socket.on("user_stop_typing", async (data = {}) => {
+      const { userId } = data;
+      const room = await chatService.getRoomForUserId(userId);
       socket.broadcast.to(room).emit("user_stop_typing", { userId, room });
     });
 
@@ -216,7 +219,7 @@ const setupSocketHandlers = (io) => {
     socket.on("disconnect", () => {
       const userData = connectedUsers[socket.id];
       if (userData) {
-        const room = userData.room || "main_chat";
+        const room = userData.room || DEFAULT_ROOM;
         delete connectedUsers[socket.id];
         io.to(room).emit("user_left", {
           message: `${userData.name} غادر الغرفة`,
