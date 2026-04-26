@@ -62,6 +62,48 @@ const mapGovernorate = (governorate) => {
   };
 };
 
+const normalizeImagePayload = (image) => {
+  if (image && typeof image === "object" && !Array.isArray(image)) {
+    return {
+      main: image.main || "",
+      images: Array.isArray(image.images) ? image.images : [],
+    };
+  }
+
+  return {
+    main: "",
+    images: [],
+  };
+};
+
+const normalizeStatsPayload = (stats) => {
+  if (stats && typeof stats === "object" && !Array.isArray(stats)) {
+    return {
+      games: Number(stats.games) || 0,
+      goals: Number(stats.goals) || 0,
+      assists: Number(stats.assists) || 0,
+      yellowCards: Number(stats.yellowCards) || 0,
+      redCards: Number(stats.redCards) || 0,
+      motm: Number(stats.motm) || 0,
+      wins: Number(stats.wins) || 0,
+      draws: Number(stats.draws) || 0,
+      losses: Number(stats.losses) || 0,
+    };
+  }
+
+  return {
+    games: 0,
+    goals: 0,
+    assists: 0,
+    yellowCards: 0,
+    redCards: 0,
+    motm: 0,
+    wins: 0,
+    draws: 0,
+    losses: 0,
+  };
+};
+
 async function resolveGovernorate({ governorateId, governorate }) {
   if (governorateId) {
     return Governorate.findByPk(Number(governorateId));
@@ -371,7 +413,10 @@ router.get("/user/:id", optionalAuthenticateToken, async (req, res) => {
     return res.status(200).json({
       ...user.toJSON(),
       governorate: mapGovernorate(user.governorate),
+      image: normalizeImagePayload(user.image),
+      position: user.position || "",
       overall,
+      stats: normalizeStatsPayload(),
     });
   } catch (err) {
     console.error("Error fetching user:", err);
@@ -603,12 +648,13 @@ router.get("/profile", async (req, res) => {
       return res.status(200).json({
         ...user,
         governorate: mapGovernorate(user.governorate),
+        image: normalizeImagePayload(user.image),
         position: user.position || "",
         overall,
-        stats: {
+        stats: normalizeStatsPayload({
           ...totals,
           ...wdl,
-        },
+        }),
       });
     } catch (error) {
       console.error("Error fetching user profile:", error);
