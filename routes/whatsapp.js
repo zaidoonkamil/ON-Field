@@ -32,8 +32,8 @@ function parseList(value) {
 }
 
 function ensureAdmin(req, res) {
-  if (req.user?.role !== "admin") {
-    res.status(403).json({ error: "Only admin can use WhatsApp service" });
+  if (!["admin", "super_admin"].includes(req.user?.role)) {
+    res.status(403).json({ error: "Only admin or super admin can use WhatsApp service" });
     return false;
   }
 
