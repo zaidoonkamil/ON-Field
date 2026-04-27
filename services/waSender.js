@@ -14,6 +14,9 @@ const RECONNECT_DELAY_MS = Number(
 const MAX_RECONNECT_DELAY_MS = Number(
   process.env.WHATSAPP_MAX_RECONNECT_DELAY_MS || 120000
 );
+const READY_WAIT_TIMEOUT_MS = Number(
+  process.env.WHATSAPP_READY_WAIT_TIMEOUT_MS || 20000
+);
 
 let client = null;
 let initializingPromise = null;
@@ -93,6 +96,33 @@ function getStatus() {
     connectedNumber,
     lastError: latestError,
   };
+}
+
+function waitForClientReady(timeoutMs = READY_WAIT_TIMEOUT_MS) {
+  if (client && connectionStatus === "ready") {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+
+    const timer = setInterval(() => {
+      if (client && connectionStatus === "ready") {
+        clearInterval(timer);
+        resolve();
+        return;
+      }
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        clearInterval(timer);
+        reject(
+          new Error(
+            "WhatsApp client is not ready yet. Wait a few seconds and try again."
+          )
+        );
+      }
+    }, 500);
+  });
 }
 
 async function buildQrImage(qrText) {
@@ -207,9 +237,24 @@ async function initWhatsAppClient() {
   return getStatus();
 }
 
-function ensureClientReady() {
+async function ensureClientReady() {
+  if (!client && AUTO_INIT && !initializingPromise) {
+    try {
+      await initWhatsAppClient();
+    } catch (_) {
+    }
+  }
+
+  if (client && connectionStatus === "ready") {
+    return;
+  }
+
+  await waitForClientReady();
+
   if (!client || connectionStatus !== "ready") {
-    throw new Error("WhatsApp client is not ready. Scan QR and wait until status becomes ready.");
+    throw new Error(
+      "WhatsApp client is not ready yet. Wait a few seconds and try again."
+    );
   }
 }
 
@@ -265,7 +310,7 @@ function startWhatsAppAutoInit() {
 }
 
 async function resolveChatId(phone) {
-  ensureClientReady();
+  await ensureClientReady();
 
   const normalizedPhone = normalizeWhatsAppPhone(phone);
   const numberId = await client.getNumberId(normalizedPhone);
