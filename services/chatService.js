@@ -17,6 +17,10 @@ class ChatService {
     return "main_chat";
   }
 
+  isScopedRoom(room) {
+    return typeof room === "string" && /^governorate_\d+$/.test(room);
+  }
+
   getRoomForGovernorateId(governorateId) {
     const normalizedGovernorateId = Number(governorateId);
     if (Number.isInteger(normalizedGovernorateId) && normalizedGovernorateId > 0) {
@@ -24,6 +28,24 @@ class ChatService {
     }
 
     return this.getDefaultRoom();
+  }
+
+  async resolveCanonicalRoomForGovernorateId(governorateId) {
+    const normalizedGovernorateId = Number(governorateId);
+    if (!Number.isInteger(normalizedGovernorateId) || normalizedGovernorateId <= 0) {
+      return this.getDefaultRoom();
+    }
+
+    const governorate = await Governorate.findByPk(normalizedGovernorateId, {
+      attributes: ["id", "name"],
+    });
+
+    const governorateName = governorate?.name?.toString().trim().toLowerCase() ?? "";
+    if (governorateName == "بغداد" || governorateName == "baghdad") {
+      return this.getDefaultRoom();
+    }
+
+    return this.getRoomForGovernorateId(normalizedGovernorateId);
   }
 
   async getRoomForUserId(userId) {
@@ -40,7 +62,41 @@ class ChatService {
       throw new Error("User not found");
     }
 
-    return this.getRoomForGovernorateId(user.governorateId);
+    return this.resolveCanonicalRoomForGovernorateId(user.governorateId);
+  }
+
+  async resolveRoomForUser(userId, requestedRoom) {
+    const defaultRoom = this.getDefaultRoom();
+    const normalizedRequestedRoom =
+      typeof requestedRoom === "string" && requestedRoom.trim() !== ""
+        ? requestedRoom.trim()
+        : defaultRoom;
+
+    if (!this.isScopedRoom(normalizedRequestedRoom)) {
+      return defaultRoom;
+    }
+
+    const user = await User.findByPk(Number(userId), {
+      attributes: ["id", "governorateId"],
+    });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const allowedRoom = await this.resolveCanonicalRoomForGovernorateId(
+      user.governorateId
+    );
+    const scopedGovernorateRoom = this.getRoomForGovernorateId(user.governorateId);
+
+    if (
+      normalizedRequestedRoom !== allowedRoom &&
+      normalizedRequestedRoom !== scopedGovernorateRoom
+    ) {
+      throw new Error("Not allowed for this room");
+    }
+
+    return allowedRoom;
   }
 
   async ensureMessageSchema() {
@@ -126,18 +182,10 @@ class ChatService {
       });
     }
 
-    await this.migrateLegacyMainRoomToBaghdad();
+    await this.migrateBaghdadScopedRoomToLegacy();
   }
 
-  async migrateLegacyMainRoomToBaghdad() {
-    const legacyMessagesCount = await Message.count({
-      where: { room: this.getDefaultRoom() },
-    });
-
-    if (!legacyMessagesCount) {
-      return;
-    }
-
+  async migrateBaghdadScopedRoomToLegacy() {
     const baghdad = await Governorate.findOne({
       where: {
         name: {
@@ -152,8 +200,12 @@ class ChatService {
     }
 
     await Message.update(
-      { room: this.getRoomForGovernorateId(baghdad.id) },
-      { where: { room: this.getDefaultRoom() } }
+      { room: this.getDefaultRoom() },
+      {
+        where: {
+          room: this.getRoomForGovernorateId(baghdad.id),
+        },
+      }
     );
   }
 
@@ -387,7 +439,7 @@ class ChatService {
 
       const userId = Number(payload.userId);
       const messageContent = typeof payload.content === "string" ? payload.content.trim() : "";
-      const targetRoom = await this.getRoomForUserId(userId);
+      const targetRoom = await this.resolveRoomForUser(userId, payload.room);
       const mediaUrl = payload.mediaUrl || null;
       const resolvedMediaType = mediaUrl
         ? this.resolveMediaType(payload.mediaType, mediaUrl)
@@ -523,7 +575,7 @@ class ChatService {
     }
   }
 
-  async searchMentionUsers(query = "", limit = 20, excludeUserId = null) {
+  async searchMentionUsers(query = "", limit = 20, excludeUserId = null, room = "main_chat") {
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
     const trimmedQuery = String(query || "").trim();
 
@@ -543,7 +595,11 @@ class ChatService {
       }
     }
 
-    if (governorateId !== null && governorateId !== undefined) {
+    if (
+      governorateId !== null &&
+      governorateId !== undefined &&
+      this.isScopedRoom(room)
+    ) {
       where.governorateId = governorateId;
     }
 
@@ -585,13 +641,14 @@ class ChatService {
 
     let resolvedMentionIds = [];
     if (mentionNames.length) {
+      const shouldScopeMentions = this.isScopedRoom(message.room);
       const senderUser = senderId
         ? await User.findByPk(senderId, { attributes: ["governorateId"] })
         : null;
 
       const mentionedUsers = await User.findAll({
         where: {
-          ...(senderUser?.governorateId
+          ...(shouldScopeMentions && senderUser?.governorateId
             ? { governorateId: senderUser.governorateId }
             : {}),
           name: {
@@ -659,13 +716,14 @@ class ChatService {
 
     let resolvedMentionIds = [];
     if (mentionNames.length) {
+      const shouldScopeMentions = this.isScopedRoom(message.room);
       const senderUser = senderId
         ? await User.findByPk(senderId, { attributes: ["governorateId"] })
         : null;
 
       const mentionedUsers = await User.findAll({
         where: {
-          ...(senderUser?.governorateId
+          ...(shouldScopeMentions && senderUser?.governorateId
             ? { governorateId: senderUser.governorateId }
             : {}),
           name: {
@@ -705,19 +763,23 @@ class ChatService {
     const preview = this.getMessagePreview(payload);
     const mentionedUserIds = await this.getMentionedUserIds({ message: payload, sender });
     const senderName = sender?.name || "User";
-    const senderUser = await User.findByPk(senderId, {
-      attributes: ["governorateId"],
-    });
-    const eligibleUserIds = senderUser?.governorateId
-      ? (
-          await User.findAll({
-            where: { governorateId: senderUser.governorateId },
-            attributes: ["id"],
-          })
-        )
-          .map((user) => Number(user.id))
-          .filter((id) => Number.isInteger(id) && id > 0)
-      : [];
+    let eligibleUserIds = null;
+
+    if (this.isScopedRoom(payload.room)) {
+      const senderUser = await User.findByPk(senderId, {
+        attributes: ["governorateId"],
+      });
+      eligibleUserIds = senderUser?.governorateId
+        ? (
+            await User.findAll({
+              where: { governorateId: senderUser.governorateId },
+              attributes: ["id"],
+            })
+          )
+            .map((user) => Number(user.id))
+            .filter((id) => Number.isInteger(id) && id > 0)
+        : [];
+    }
 
     await sendChatNotificationToAllExcept({
       senderUserId: senderId,

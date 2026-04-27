@@ -57,6 +57,7 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
     const {
       userId,
       content = "",
+      room = "main_chat",
       mentions,
       mediaUrl: bodyMediaUrl,
       mediaType,
@@ -68,6 +69,7 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
     const message = await chatService.saveMessage({
       userId,
       content,
+      room,
       mediaUrl: uploadedMediaUrl,
       mediaType: mediaType || req.file?.mimetype,
       mentions,
@@ -125,8 +127,13 @@ router.post("/api/chat/messages", upload.single("file"), async (req, res) => {
 
 router.get("/api/chat/mentions", async (req, res) => {
   try {
-    const { q = "", limit = 20, excludeUserId } = req.query;
-    const users = await chatService.searchMentionUsers(q, limit, excludeUserId);
+    const { q = "", limit = 20, excludeUserId, room = "main_chat" } = req.query;
+    const users = await chatService.searchMentionUsers(
+      q,
+      limit,
+      excludeUserId,
+      room
+    );
 
     return res.status(200).json({
       success: true,
@@ -143,9 +150,11 @@ router.get("/api/chat/mentions", async (req, res) => {
 
 router.get("/api/chat/messages", async (req, res) => {
   try {
-    const room = req.query.userId
-      ? await chatService.getRoomForUserId(req.query.userId)
-      : (req.query.room || chatService.getDefaultRoom());
+    const requestedRoom = req.query.room || chatService.getDefaultRoom();
+    const room =
+      req.query.userId && chatService.isScopedRoom(requestedRoom)
+        ? await chatService.resolveRoomForUser(req.query.userId, requestedRoom)
+        : requestedRoom;
     const limit = req.query.limit || 50;
     const [messages, pinnedMessage] = await Promise.all([
       chatService.getAllMessages(room, parseInt(limit, 10)),
@@ -209,9 +218,12 @@ router.patch("/api/chat/messages/:messageId/pin", async (req, res) => {
 router.delete("/api/chat/pin", async (req, res) => {
   try {
     const userId = req.body.userId || req.query.userId;
-    const room = userId
-      ? await chatService.getRoomForUserId(userId)
-      : (req.body.room || req.query.room || chatService.getDefaultRoom());
+    const requestedRoom =
+      req.body.room || req.query.room || chatService.getDefaultRoom();
+    const room =
+      userId && chatService.isScopedRoom(requestedRoom)
+        ? await chatService.resolveRoomForUser(userId, requestedRoom)
+        : requestedRoom;
 
     await ensureAdminPermission(userId);
     const unpinnedMessage = await chatService.unpinMessage({ room });

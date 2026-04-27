@@ -41,8 +41,15 @@ const setupSocketHandlers = (io) => {
     // ======================== الاتصال والانضمام ========================
     socket.on("user_connected", async (userData = {}) => {
       try {
-        const { userId, name, image, position, role } = userData;
-        const room = await chatService.getRoomForUserId(userId);
+        const {
+          userId,
+          name,
+          image,
+          position,
+          role,
+          room: requestedRoom = DEFAULT_ROOM,
+        } = userData;
+        const room = await chatService.resolveRoomForUser(userId, requestedRoom);
 
         // تخزين بيانات المستخدم
         connectedUsers[socket.id] = {
@@ -83,18 +90,20 @@ const setupSocketHandlers = (io) => {
         const {
           userId,
           content = "",
+          room: requestedRoom = DEFAULT_ROOM,
           mediaUrl = null,
           mediaType = null,
           mentions = [],
           replyToMessageId = null,
         } = data;
 
-        const room = await chatService.getRoomForUserId(userId);
+        const room = await chatService.resolveRoomForUser(userId, requestedRoom);
         socket.join(room);
 
         const savedMessage = await chatService.saveMessage({
           userId,
           content,
+          room,
           mediaUrl,
           mediaType,
           mentions,
@@ -189,8 +198,8 @@ const setupSocketHandlers = (io) => {
 
     socket.on("unpin_message", async (data = {}) => {
       try {
-        const { userId } = data;
-        const room = await chatService.getRoomForUserId(userId);
+        const { userId, room: requestedRoom = DEFAULT_ROOM } = data;
+        const room = await chatService.resolveRoomForUser(userId, requestedRoom);
         await ensureAdminPermission(userId);
         await chatService.unpinMessage({ room });
 
@@ -210,8 +219,7 @@ const setupSocketHandlers = (io) => {
     });
 
     socket.on("user_stop_typing", async (data = {}) => {
-      const { userId } = data;
-      const room = await chatService.getRoomForUserId(userId);
+      const { userId, room = DEFAULT_ROOM } = data;
       socket.broadcast.to(room).emit("user_stop_typing", { userId, room });
     });
 
