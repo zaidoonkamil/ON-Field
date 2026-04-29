@@ -60,6 +60,50 @@ async function backfillGovernorateId(model, baghdadId) {
   );
 }
 
+async function backfillMonthlySquadGovernorateId(baghdadId) {
+  const rows = await MonthlySquad.findAll({
+    where: { governorateId: null },
+    attributes: ["id", "createdBy"],
+  });
+
+  for (const row of rows) {
+    let governorateId = baghdadId;
+
+    if (row.createdBy) {
+      const creator = await User.findByPk(row.createdBy, {
+        attributes: ["governorateId"],
+      });
+      if (creator?.governorateId) {
+        governorateId = creator.governorateId;
+      }
+    }
+
+    await row.update({ governorateId });
+  }
+}
+
+async function backfillPlayerOfMonthGovernorateId(baghdadId) {
+  const rows = await PlayerOfMonth.findAll({
+    where: { governorateId: null },
+    attributes: ["id", "userId"],
+  });
+
+  for (const row of rows) {
+    let governorateId = baghdadId;
+
+    if (row.userId) {
+      const user = await User.findByPk(row.userId, {
+        attributes: ["governorateId"],
+      });
+      if (user?.governorateId) {
+        governorateId = user.governorateId;
+      }
+    }
+
+    await row.update({ governorateId });
+  }
+}
+
 async function ensurePlayerOfMonthIndexes(queryInterface) {
   const tableName = PlayerOfMonth.getTableName();
   const indexes = await queryInterface.showIndex(tableName);
@@ -162,9 +206,11 @@ async function ensureCoreSchema() {
         }
       );
 
-      for (const model of scopedModels) {
-        await backfillGovernorateId(model, baghdad.id);
-      }
+      await backfillGovernorateId(Game, baghdad.id);
+      await backfillGovernorateId(Post, baghdad.id);
+      await backfillGovernorateId(LiveStream, baghdad.id);
+      await backfillMonthlySquadGovernorateId(baghdad.id);
+      await backfillPlayerOfMonthGovernorateId(baghdad.id);
 
       await ensurePlayerOfMonthIndexes(queryInterface);
     })().catch((error) => {

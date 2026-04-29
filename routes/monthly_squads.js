@@ -69,6 +69,50 @@ function buildFormation(size) {
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
+async function resolveRequestGovernorateId(req) {
+  if (req.user?.governorateId) {
+    return Number(req.user.governorateId);
+  }
+
+  if (req.user?.id) {
+    const currentUser = await User.findByPk(req.user.id, {
+      attributes: ["governorateId"],
+    });
+    if (currentUser?.governorateId) {
+      return Number(currentUser.governorateId);
+    }
+  }
+
+  return null;
+}
+
+async function resolveSquadGovernorateId(squad, transaction) {
+  if (!squad) return null;
+
+  if (squad.governorateId) {
+    return Number(squad.governorateId);
+  }
+
+  let governorateId = null;
+  if (squad.createdBy) {
+    const creator = await User.findByPk(squad.createdBy, {
+      attributes: ["governorateId"],
+      transaction,
+    });
+    if (creator?.governorateId) {
+      governorateId = Number(creator.governorateId);
+    }
+  }
+
+  if (governorateId) {
+    squad.governorateId = governorateId;
+    await squad.save({ transaction });
+    return governorateId;
+  }
+
+  return null;
+}
+
 router.post("/monthly-squads", upload.none(), authenticateToken, async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -83,13 +127,19 @@ router.post("/monthly-squads", upload.none(), authenticateToken, async (req, res
       return res.status(400).json({ error: "title and formationSize are required" });
     }
 
+    const governorateId = await resolveRequestGovernorateId(req);
+    if (!governorateId) {
+      await t.rollback();
+      return res.status(400).json({ error: "governorateId is required" });
+    }
+
     const squad = await MonthlySquad.create(
       {
         title: String(title).trim(),
         formationSize: String(formationSize),
         status: status ? String(status) : "draft",
         createdBy: req.user.id,
-        governorateId: req.user.governorateId || null,
+        governorateId,
       },
       { transaction: t }
     );
@@ -155,9 +205,10 @@ router.get("/monthly-squads/:id", optionalAuthenticateToken, async (req, res) =>
 
     const squad = await MonthlySquad.findByPk(squadId);
     if (!squad) return res.status(404).json({ error: "Squad not found" });
+    const effectiveGovernorateId = await resolveSquadGovernorateId(squad);
     if (
       governorateScope !== null &&
-      Number(squad.governorateId) !== Number(governorateScope)
+      Number(effectiveGovernorateId) !== Number(governorateScope)
     ) {
       return res.status(404).json({ error: "Squad not found" });
     }
@@ -253,13 +304,17 @@ router.post("/monthly-squads/:id/assign", upload.none(), authenticateToken, asyn
     }
 
     const squad = await MonthlySquad.findByPk(squadId, { transaction: t });
-    if (squad && !ensureGovernorateAccess(req, res, squad.governorateId)) {
+    const effectiveGovernorateId = await resolveSquadGovernorateId(squad, t);
+    if (squad && !ensureGovernorateAccess(req, res, effectiveGovernorateId)) {
       await t.rollback();
       return;
     }
 
-    const user = await User.findByPk(Number(userId), { transaction: t });
-    if (!user || Number(user.governorateId) !== Number(squad.governorateId)) {
+    const user = await User.findByPk(Number(userId), {
+      transaction: t,
+      attributes: { exclude: ["password"] },
+    });
+    if (!user || Number(user.governorateId) !== Number(effectiveGovernorateId)) {
       await t.rollback();
       return res.status(403).json({ error: "Not allowed for this governorate" });
     }
@@ -314,7 +369,8 @@ router.post("/monthly-squads/:id/unassign", upload.none(), authenticateToken, as
     }
 
     const squad = await MonthlySquad.findByPk(squadId, { transaction: t });
-    if (squad && !ensureGovernorateAccess(req, res, squad.governorateId)) {
+    const effectiveGovernorateId = await resolveSquadGovernorateId(squad, t);
+    if (squad && !ensureGovernorateAccess(req, res, effectiveGovernorateId)) {
       await t.rollback();
       return;
     }
@@ -357,7 +413,8 @@ router.delete("/monthly-squads/:id", authenticateToken, async (req, res) => {
       await t.rollback();
       return res.status(404).json({ error: "Squad not found" });
     }
-    if (!ensureGovernorateAccess(req, res, squad.governorateId)) {
+    const effectiveGovernorateId = await resolveSquadGovernorateId(squad, t);
+    if (!ensureGovernorateAccess(req, res, effectiveGovernorateId)) {
       await t.rollback();
       return;
     }
@@ -397,7 +454,8 @@ router.put("/monthly-squads/:id", upload.none(), authenticateToken, async (req, 
       await t.rollback();
       return res.status(404).json({ error: "Squad not found" });
     }
-    if (!ensureGovernorateAccess(req, res, squad.governorateId)) {
+    const effectiveGovernorateId = await resolveSquadGovernorateId(squad, t);
+    if (!ensureGovernorateAccess(req, res, effectiveGovernorateId)) {
       await t.rollback();
       return;
     }
