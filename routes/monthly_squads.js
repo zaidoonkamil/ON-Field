@@ -116,14 +116,29 @@ async function resolveSquadGovernorateId(squad, transaction) {
 async function findGovernorateFallbackSquad(governorateId, transaction) {
   if (!governorateId) return null;
 
-  return MonthlySquad.findOne({
+  const squads = await MonthlySquad.findAll({
     where: { governorateId },
-    order: [
-      ["status", "ASC"],
-      ["createdAt", "DESC"],
-    ],
+    order: [["createdAt", "DESC"]],
     transaction,
   });
+
+  if (!squads.length) return null;
+
+  for (const squad of squads) {
+    const assignedCount = await MonthlySquadSlot.count({
+      where: {
+        squadId: squad.id,
+        userId: { [Op.ne]: null },
+      },
+      transaction,
+    });
+
+    if (assignedCount > 0) {
+      return squad;
+    }
+  }
+
+  return squads[0];
 }
 
 async function ensureGovernorateDefaultSquad(governorateId, transaction) {
