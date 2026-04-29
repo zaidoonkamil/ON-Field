@@ -126,6 +126,36 @@ async function findGovernorateFallbackSquad(governorateId, transaction) {
   });
 }
 
+async function ensureGovernorateDefaultSquad(governorateId, transaction) {
+  if (!governorateId) return null;
+
+  let squad = await findGovernorateFallbackSquad(governorateId, transaction);
+  if (squad) return squad;
+
+  squad = await MonthlySquad.create(
+    {
+      title: "تشكيلة الشهر",
+      formationSize: "11",
+      status: "published",
+      createdBy: null,
+      governorateId,
+    },
+    transaction ? { transaction } : undefined
+  );
+
+  const slots = buildFormation("11").map((slot) => ({
+    squadId: squad.id,
+    ...slot,
+  }));
+
+  await MonthlySquadSlot.bulkCreate(
+    slots,
+    transaction ? { transaction } : undefined
+  );
+
+  return squad;
+}
+
 async function resolveScopedSquad({
   squadId,
   governorateScope,
@@ -147,7 +177,7 @@ async function resolveScopedSquad({
   }
 
   if (!squad && governorateScope !== null) {
-    squad = await findGovernorateFallbackSquad(governorateScope, transaction);
+    squad = await ensureGovernorateDefaultSquad(governorateScope, transaction);
     effectiveGovernorateId = await resolveSquadGovernorateId(
       squad,
       transaction
@@ -265,7 +295,7 @@ router.get("/monthly-squads/:id", optionalAuthenticateToken, async (req, res) =>
     }
 
     const slots = await MonthlySquadSlot.findAll({
-      where: { squadId },
+      where: { squadId: squad.id },
       include: [
         {
           model: User,
@@ -371,7 +401,7 @@ router.post("/monthly-squads/:id/assign", upload.none(), authenticateToken, asyn
     }
 
     const slot = await MonthlySquadSlot.findOne({
-      where: { squadId, code: String(code) },
+      where: { squadId: squad.id, code: String(code) },
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
@@ -382,7 +412,7 @@ router.post("/monthly-squads/:id/assign", upload.none(), authenticateToken, asyn
     }
 
     const already = await MonthlySquadSlot.findOne({
-      where: { squadId, userId: Number(userId) },
+      where: { squadId: squad.id, userId: Number(userId) },
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
@@ -436,7 +466,7 @@ router.post("/monthly-squads/:id/unassign", upload.none(), authenticateToken, as
     }
 
     const slot = await MonthlySquadSlot.findOne({
-      where: { squadId, code: String(code) },
+      where: { squadId: squad.id, code: String(code) },
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
