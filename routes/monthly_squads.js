@@ -116,13 +116,64 @@ async function resolveSquadGovernorateId(squad, transaction) {
 async function findGovernorateFallbackSquad(governorateId, transaction) {
   if (!governorateId) return null;
 
-  const squads = await MonthlySquad.findAll({
+  let squads = await MonthlySquad.findAll({
     where: { governorateId },
     order: [["createdAt", "DESC"]],
     transaction,
   });
 
+  if (!squads.length) {
+    const slotRows = await MonthlySquadSlot.findAll({
+      where: {
+        userId: { [Op.ne]: null },
+      },
+      include: [
+        {
+          model: User,
+          as: "user",
+          required: true,
+          attributes: ["id", "governorateId"],
+          where: { governorateId },
+        },
+        {
+          model: MonthlySquad,
+          as: "squad",
+          required: true,
+        },
+      ],
+      order: [[{ model: MonthlySquad, as: "squad" }, "createdAt", "DESC"]],
+      transaction,
+    });
+
+    const seenSquadIds = [];
+    for (const slotRow of slotRows) {
+      const squad = slotRow.squad;
+      if (!squad) continue;
+      if (!seenSquadIds.includes(squad.id)) {
+        seenSquadIds.push(squad.id);
+      }
+    }
+
+    if (seenSquadIds.length) {
+      squads = await MonthlySquad.findAll({
+        where: { id: seenSquadIds },
+        order: [["createdAt", "DESC"]],
+        transaction,
+      });
+
+      for (const squad of squads) {
+        if (!squad.governorateId) {
+          squad.governorateId = governorateId;
+          await squad.save({ transaction });
+        }
+      }
+    }
+  }
+
   if (!squads.length) return null;
+
+  let bestSquad = null;
+  let bestAssignedCount = -1;
 
   for (const squad of squads) {
     const assignedCount = await MonthlySquadSlot.count({
@@ -133,12 +184,13 @@ async function findGovernorateFallbackSquad(governorateId, transaction) {
       transaction,
     });
 
-    if (assignedCount > 0) {
-      return squad;
+    if (assignedCount > bestAssignedCount) {
+      bestAssignedCount = assignedCount;
+      bestSquad = squad;
     }
   }
 
-  return squads[0];
+  return bestSquad ?? squads[0];
 }
 
 async function ensureGovernorateDefaultSquad(governorateId, transaction) {
