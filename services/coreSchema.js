@@ -60,6 +60,47 @@ async function backfillGovernorateId(model, baghdadId) {
   );
 }
 
+async function ensurePlayerOfMonthIndexes(queryInterface) {
+  const tableName = PlayerOfMonth.getTableName();
+  const indexes = await queryInterface.showIndex(tableName);
+
+  for (const index of indexes) {
+    const fields = Array.isArray(index.fields)
+      ? index.fields.map((field) => field.attribute || field.name)
+      : [];
+
+    const isLegacyMonthUnique =
+      index.unique === true &&
+      fields.length === 1 &&
+      fields[0] === "month";
+
+    if (isLegacyMonthUnique) {
+      await queryInterface.removeIndex(tableName, index.name);
+    }
+  }
+
+  const refreshedIndexes = await queryInterface.showIndex(tableName);
+  const hasScopedUniqueIndex = refreshedIndexes.some((index) => {
+    const fields = Array.isArray(index.fields)
+      ? index.fields.map((field) => field.attribute || field.name)
+      : [];
+
+    return (
+      index.unique === true &&
+      fields.length === 2 &&
+      fields[0] === "month" &&
+      fields[1] === "governorateId"
+    );
+  });
+
+  if (!hasScopedUniqueIndex) {
+    await queryInterface.addIndex(tableName, ["month", "governorateId"], {
+      unique: true,
+      name: "player_of_month_month_governorate_unique",
+    });
+  }
+}
+
 async function ensureCoreSchema() {
   if (!coreSchemaPromise) {
     coreSchemaPromise = (async () => {
@@ -124,6 +165,8 @@ async function ensureCoreSchema() {
       for (const model of scopedModels) {
         await backfillGovernorateId(model, baghdad.id);
       }
+
+      await ensurePlayerOfMonthIndexes(queryInterface);
     })().catch((error) => {
       coreSchemaPromise = null;
       throw error;

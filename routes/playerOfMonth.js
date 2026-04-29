@@ -38,8 +38,12 @@ router.post("/player-of-month", authenticateToken, uploadImage.single("image"), 
     if (!ensureGovernorateAccess(req, res, user.governorateId)) {
       return;
     }
+    const scopedGovernorateId = req.user.governorateId || user.governorateId || null;
     if (user.role === "admin" || user.role === "super_admin") {
       return res.status(400).json({ error: "Admin cannot be player of the month" });
+    }
+    if (!scopedGovernorateId) {
+      return res.status(400).json({ error: "governorateId is required for player of the month" });
     }
 
     const file = req.file;
@@ -48,14 +52,14 @@ router.post("/player-of-month", authenticateToken, uploadImage.single("image"), 
     const existing = await PlayerOfMonth.findOne({
       where: {
         month: selectedMonth,
-        governorateId: req.user.governorateId || user.governorateId || null,
+        governorateId: scopedGovernorateId,
       },
     });
 
     if (existing) {
       const updateObj = {
         userId: user.id,
-        governorateId: req.user.governorateId || user.governorateId || null,
+        governorateId: scopedGovernorateId,
         note: note || null,
       };
       if (imageData) updateObj.image = imageData;
@@ -64,7 +68,7 @@ router.post("/player-of-month", authenticateToken, uploadImage.single("image"), 
       await PlayerOfMonth.create({
         month: selectedMonth,
         userId: user.id,
-        governorateId: req.user.governorateId || user.governorateId || null,
+        governorateId: scopedGovernorateId,
         note: note || null,
         image: imageData || user.image || null,
       });
