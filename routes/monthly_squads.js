@@ -69,6 +69,17 @@ function buildFormation(size) {
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
+function serializeMonthlySquad(squad) {
+  if (!squad) return null;
+
+  const plain = typeof squad.toJSON === "function" ? squad.toJSON() : { ...squad };
+  return {
+    ...plain,
+    createdBy: plain.createdBy ?? 0,
+    governorateId: plain.governorateId ?? 0,
+  };
+}
+
 async function resolveRequestGovernorateId(req) {
   if (req.user?.governorateId) {
     return Number(req.user.governorateId);
@@ -420,7 +431,7 @@ router.get("/monthly-squads/:id", optionalAuthenticateToken, async (req, res) =>
       return j;
     });
 
-    return res.json({ squad, slots: mapped });
+    return res.json({ squad: serializeMonthlySquad(squad), slots: mapped });
   } catch (e) {
     console.error("monthly-squads/:id error:", e?.message);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -493,7 +504,11 @@ router.post("/monthly-squads/:id/assign", upload.none(), authenticateToken, asyn
     await slot.save({ transaction: t });
 
     await t.commit();
-    return res.json({ message: "Player assigned", slot });
+    return res.json({
+      message: "Player assigned",
+      slot,
+      squad: serializeMonthlySquad(squad),
+    });
   } catch (e) {
     await t.rollback();
     console.error(e);
@@ -548,7 +563,10 @@ router.post("/monthly-squads/:id/unassign", upload.none(), authenticateToken, as
     await slot.save({ transaction: t });
 
     await t.commit();
-    return res.json({ message: "Player removed from position" });
+    return res.json({
+      message: "Player removed from position",
+      squad: serializeMonthlySquad(squad),
+    });
   } catch (e) {
     await t.rollback();
     console.error(e);
@@ -622,7 +640,10 @@ router.put("/monthly-squads/:id", upload.none(), authenticateToken, async (req, 
     await squad.save({ transaction: t });
 
     await t.commit();
-    return res.json({ message: "Monthly squad updated", squad });
+    return res.json({
+      message: "Monthly squad updated",
+      squad: serializeMonthlySquad(squad),
+    });
   } catch (e) {
     await t.rollback();
     console.error(e);
