@@ -73,6 +73,20 @@ const formatPrice = (value) => {
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
+function normalizeStartsAtInput(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day, hour, minute, second] = match;
+  return `${year}-${month}-${day} ${hour}:${minute}:${second || "00"}`;
+}
+
 async function getRawStartsAtMap(gameIds = []) {
   const uniqueIds = [...new Set(gameIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
   if (!uniqueIds.length) {
@@ -125,16 +139,32 @@ router.post("/games", upload.single("stadiumImage"), authenticateToken, async (r
       return res.status(400).json({ error: "price يجب أن يكون رقم صحيح أو عشري وأكبر أو يساوي 0" });
     }
 
+    const normalizedStartsAt = normalizeStartsAtInput(startsAt);
+    if (!normalizedStartsAt) {
+      return res.status(400).json({ error: "startsAt format is invalid" });
+    }
+
     const game = await Game.create({
       stadiumName,
       stadiumImage: req.file?.filename || null,
-      startsAt,
+      startsAt: normalizedStartsAt,
       formationSize: String(formationSize),
       status: "open",
       locationUrl: locationUrl || null,
       price: numericPrice,
       governorateId: req.user.governorateId || null,
     });
+
+    await sequelize.query(
+      `
+        UPDATE Games
+        SET startsAt = STR_TO_DATE(?, '%Y-%m-%d %H:%i:%s')
+        WHERE id = ?
+      `,
+      {
+        replacements: [normalizedStartsAt, game.id],
+      }
+    );
 
     const slots = buildFormation(formationSize);
     const bulk = [];
