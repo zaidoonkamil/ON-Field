@@ -122,8 +122,8 @@ router.post("/games", upload.single("stadiumImage"), authenticateToken, async (r
       price: formatPrice(game.price),
     });
 
-    sendNotificationToAll('تم نشر مباراة جديدة راجع سجل المباريات', 'مباراة جديدة')
-      .catch(err => console.error("sendNotificationToAll error:", err));
+    //sendNotificationToAll('تم نشر مباراة جديدة راجع سجل المباريات', 'مباراة جديدة')
+    //  .catch(err => console.error("sendNotificationToAll error:", err));
 
     return;
   } catch (e) {
