@@ -73,6 +73,37 @@ const formatPrice = (value) => {
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
+async function getRawStartsAtMap(gameIds = []) {
+  const uniqueIds = [...new Set(gameIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  if (!uniqueIds.length) {
+    return new Map();
+  }
+
+  const placeholders = uniqueIds.map(() => "?").join(", ");
+  const [rows] = await sequelize.query(
+    `
+      SELECT id, DATE_FORMAT(startsAt, '%Y-%m-%d %H:%i:%s') AS startsAt
+      FROM Games
+      WHERE id IN (${placeholders})
+    `,
+    { replacements: uniqueIds }
+  );
+
+  return new Map(rows.map((row) => [Number(row.id), row.startsAt]));
+}
+
+async function serializeGamesWithRawStartsAt(games = []) {
+  const startsAtMap = await getRawStartsAtMap(games.map((game) => game.id));
+  return games.map((g) => {
+    const j = g.toJSON();
+    return {
+      ...j,
+      startsAt: startsAtMap.get(Number(j.id)) || j.startsAt,
+      price: formatPrice(j.price),
+    };
+  });
+}
+
 router.post("/games", upload.single("stadiumImage"), authenticateToken, async (req, res) => {
   try {
     if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
@@ -157,13 +188,7 @@ router.get("/games", optionalAuthenticateToken, async (req, res) => {
       offset,
     });
 
-    const data = games.map((g) => {
-      const j = g.toJSON();
-      return {
-        ...j,
-        price: formatPrice(j.price),
-      };
-    });
+    const data = await serializeGamesWithRawStartsAt(games);
 
     return res.json({
       data,
@@ -208,13 +233,7 @@ router.get("/games/open", optionalAuthenticateToken, async (req, res) => {
       offset,
     });
 
-    const data = games.map((g) => {
-      const j = g.toJSON();
-      return {
-        ...j,
-        price: formatPrice(j.price),
-      };
-    });
+    const data = await serializeGamesWithRawStartsAt(games);
 
     return res.json({
       data,
@@ -259,13 +278,7 @@ router.get("/games/closed", optionalAuthenticateToken, async (req, res) => {
       offset,
     });
 
-    const data = games.map((g) => {
-      const j = g.toJSON();
-      return {
-        ...j,
-        price: formatPrice(j.price),
-      };
-    });
+    const data = await serializeGamesWithRawStartsAt(games);
 
     return res.json({
       data,
@@ -321,10 +334,12 @@ router.get("/games/:id", optionalAuthenticateToken, async (req, res) => {
     });
 
     const gameData = game.toJSON();
+    const startsAtMap = await getRawStartsAtMap([game.id]);
 
     return res.json({
       game: {
         ...gameData,
+        startsAt: startsAtMap.get(Number(gameData.id)) || gameData.startsAt,
         price: formatPrice(gameData.price),
       },
       slots: mapped,

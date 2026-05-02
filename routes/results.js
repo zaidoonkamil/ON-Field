@@ -22,6 +22,23 @@ const {
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
+async function getRawGameStartsAt(gameId) {
+  const numericId = Number(gameId);
+  if (!Number.isInteger(numericId) || numericId <= 0) return null;
+
+  const [rows] = await Game.sequelize.query(
+    `
+      SELECT DATE_FORMAT(startsAt, '%Y-%m-%d %H:%i:%s') AS startsAt
+      FROM Games
+      WHERE id = ?
+      LIMIT 1
+    `,
+    { replacements: [numericId] }
+  );
+
+  return rows[0]?.startsAt || null;
+}
+
 router.post("/games/:id/results", authenticateToken, async (req, res) => {
   try {
     if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
@@ -266,8 +283,14 @@ router.get("/games/:id/results", optionalAuthenticateToken, async (req, res) => 
     const redB = sumByTeam(mappedPlayerStats, "B", "redCards");
     const motm = mappedPlayerStats.find((p) => p.isMotm === true) || null;
 
+    const rawStartsAt = await getRawGameStartsAt(game.id);
+    const gameData = game.toJSON();
+
     return res.json({
-      game,
+      game: {
+        ...gameData,
+        startsAt: rawStartsAt || gameData.startsAt,
+      },
       lineups: mappedSlots,
       matchStats,
       playerStats: mappedPlayerStats,
