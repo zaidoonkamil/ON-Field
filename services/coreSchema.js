@@ -12,6 +12,7 @@ const {
 const { BAGHDAD_NAME } = require("./governorates");
 
 let coreSchemaPromise = null;
+const LEGACY_GAMES_SHIFT_MARKER = "legacy_games_plus_2h_v1";
 
 async function ensureColumn(queryInterface, tableName, columnName, definition) {
   const table = await queryInterface.describeTable(tableName);
@@ -145,6 +146,52 @@ async function ensurePlayerOfMonthIndexes(queryInterface) {
   }
 }
 
+async function ensureAppMetaTable(queryInterface) {
+  await queryInterface.sequelize.query(`
+    CREATE TABLE IF NOT EXISTS app_meta (
+      meta_key VARCHAR(191) PRIMARY KEY,
+      meta_value TEXT NULL,
+      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+}
+
+async function hasMetaFlag(key) {
+  const [rows] = await sequelize.query(
+    `SELECT meta_key FROM app_meta WHERE meta_key = ? LIMIT 1`,
+    { replacements: [key] }
+  );
+  return rows.length > 0;
+}
+
+async function setMetaFlag(key, value = "1") {
+  await sequelize.query(
+    `
+      INSERT INTO app_meta (meta_key, meta_value)
+      VALUES (?, ?)
+      ON DUPLICATE KEY UPDATE
+        meta_value = VALUES(meta_value),
+        updatedAt = CURRENT_TIMESTAMP
+    `,
+    { replacements: [key, value] }
+  );
+}
+
+async function shiftLegacyGamesByTwoHours(queryInterface) {
+  await ensureAppMetaTable(queryInterface);
+
+  const alreadyShifted = await hasMetaFlag(LEGACY_GAMES_SHIFT_MARKER);
+  if (alreadyShifted) return;
+
+  await sequelize.query(`
+    UPDATE Games
+    SET startsAt = DATE_ADD(startsAt, INTERVAL 2 HOUR)
+  `);
+
+  await setMetaFlag(LEGACY_GAMES_SHIFT_MARKER, "done");
+}
+
 async function ensureCoreSchema() {
   if (!coreSchemaPromise) {
     coreSchemaPromise = (async () => {
@@ -213,6 +260,7 @@ async function ensureCoreSchema() {
       await backfillPlayerOfMonthGovernorateId(baghdad.id);
 
       await ensurePlayerOfMonthIndexes(queryInterface);
+      await shiftLegacyGamesByTwoHours(queryInterface);
     })().catch((error) => {
       coreSchemaPromise = null;
       throw error;
