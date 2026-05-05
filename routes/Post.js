@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const router = express.Router();
 const uploadPostMedia = require("../middlewares/uploads");
 const { Post, User } = require("../models");
@@ -115,23 +115,32 @@ async function keepOnlySavedFiles(files = []) {
   return keptFiles;
 }
 
-async function ensureAllUploadedFilesSaved(req, res) {
+async function ensureAllUploadedFilesSaved(req) {
   const uploadedFiles = req.files || [];
   const savedFiles = await keepOnlySavedFiles(uploadedFiles);
 
-  if (savedFiles.length === uploadedFiles.length) {
-    return savedFiles;
+  if (savedFiles.length !== uploadedFiles.length) {
+    console.warn(
+      `Post upload arrived partially: kept ${savedFiles.length} of ${uploadedFiles.length} files for this request.`
+    );
   }
 
-  for (const file of savedFiles) {
-    await safeDeleteFile(file.filename);
-  }
+  const hasSavedImage = savedFiles.some((file) =>
+    String(file?.mimetype || "").startsWith("image/")
+  );
+  const hasSavedVideo = savedFiles.some((file) =>
+    String(file?.mimetype || "").startsWith("video/")
+  );
+  const requestedVideo = uploadedFiles.some((file) =>
+    String(file?.mimetype || "").startsWith("video/")
+  );
 
-  res.status(408).json({
-    error:
-      "لم يكتمل رفع كل الملفات. تم إلغاء هذه الدفعة حتى لا ينحفظ المنشور ناقص.",
-  });
-  return null;
+  return {
+    files: savedFiles,
+    hasSavedImage,
+    hasSavedVideo,
+    requestedVideo,
+  };
 }
 
 router.post(
@@ -144,9 +153,13 @@ router.post(
     const { text } = req.body;
     const images = [];
     const videos = [];
-    const savedFiles = await ensureAllUploadedFilesSaved(req, res);
-    if (!savedFiles) {
-      return;
+    const uploadResult = await ensureAllUploadedFilesSaved(req);
+    const savedFiles = uploadResult.files;
+
+    if (uploadResult.requestedVideo && !uploadResult.hasSavedVideo) {
+      return res.status(408).json({
+        error: "Ø±ÙØ¹ Ø§Ù„ÙÙŠØ¯ÙŠÙˆ Ù„Ù… ÙŠÙƒØªÙ…Ù„. Ø­Ø§ÙˆÙ„ Ù…Ø±Ø© Ø«Ø§Ù†ÙŠØ©ØŒ Ù„Ø£Ù† Ø§Ù„Ø³ÙŠØ±ÙØ± Ø§Ø³ØªÙ„Ù… ØµÙˆØ± ÙÙ‚Ø· Ø¨Ø¯ÙˆÙ† Ø£ÙŠ ÙÙŠØ¯ÙŠÙˆ ÙƒØ§Ù…Ù„.",
+      });
     }
 
     for (const f of savedFiles) {
@@ -343,3 +356,6 @@ router.delete(
 });
 
 module.exports = router;
+
+
+

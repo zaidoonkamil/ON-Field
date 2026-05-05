@@ -1,4 +1,4 @@
-const fs = require("fs/promises");
+﻿const fs = require("fs/promises");
 const path = require("path");
 const { spawn } = require("child_process");
 const { Post } = require("../models");
@@ -14,6 +14,11 @@ const maxConcurrentJobs = Math.max(
 const processingQueue = [];
 const queuedVideoKeys = new Set();
 let activeJobs = 0;
+const missingSourceRetryDelayMs =
+  Number.parseInt(process.env.POST_VIDEO_MISSING_SOURCE_RETRY_DELAY_MS || "8000", 10) ||
+  8000;
+const missingSourceRetryLimit =
+  Number.parseInt(process.env.POST_VIDEO_MISSING_SOURCE_RETRY_LIMIT || "5", 10) || 5;
 
 function toPosixPath(value) {
   return String(value || "").replace(/\\/g, "/");
@@ -299,21 +304,46 @@ async function updatePostVideoEntry(postId, videoId, updater) {
   return true;
 }
 
+async function scheduleMissingSourceRetry(job, reason) {
+  const nextAttempt = (job.attempt || 0) + 1;
+
+  if (nextAttempt > missingSourceRetryLimit) {
+    await updatePostVideoEntry(job.postId, job.videoId, (current) => ({
+      ...current,
+      processing: false,
+      status: "missing_source",
+    }));
+
+    console.warn(
+      `Skipping adaptive processing for post ${job.postId}, video ${job.videoId}: ${reason} (${job.fileName})`
+    );
+    return;
+  }
+
+  await updatePostVideoEntry(job.postId, job.videoId, (current) => ({
+    ...current,
+    processing: true,
+    status: "pending",
+  }));
+
+  setTimeout(() => {
+    queuePostVideoProcessing({
+      postId: job.postId,
+      videoId: job.videoId,
+      fileName: job.fileName,
+      attempt: nextAttempt,
+      force: true,
+    });
+  }, missingSourceRetryDelayMs * nextAttempt);
+}
+
 async function processQueuedVideoJob(job) {
   const { postId, videoId, fileName } = job;
 
   try {
     const sourceExists = await hasUploadedSourceFile(fileName);
     if (!sourceExists) {
-      await updatePostVideoEntry(postId, videoId, (current) => ({
-        ...current,
-        processing: false,
-        status: "missing_source",
-      }));
-
-      console.warn(
-        `Skipping adaptive processing for post ${postId}, video ${videoId}: source file not found (${fileName})`
-      );
+      await scheduleMissingSourceRetry(job, "source file not found");
       return;
     }
 
@@ -330,6 +360,15 @@ async function processQueuedVideoJob(job) {
       `Adaptive post video ready for post ${postId}, video ${videoId}: ${adaptivePath}`
     );
   } catch (error) {
+    const message = String(error?.message || "");
+    if (
+      message.includes("No such file or directory") ||
+      message.includes("Error opening input file")
+    ) {
+      await scheduleMissingSourceRetry(job, message);
+      return;
+    }
+
     await updatePostVideoEntry(postId, videoId, (current) => ({
       ...current,
       processing: false,
@@ -363,12 +402,12 @@ function processVideoQueue() {
   }
 }
 
-function queuePostVideoProcessing({ postId, videoId, fileName }) {
+function queuePostVideoProcessing({ postId, videoId, fileName, attempt = 0, force = false }) {
   const normalizedFileName = toPosixPath(fileName).trim();
   if (!postId || !videoId || !normalizedFileName) return false;
 
   const queueKey = `${postId}:${videoId}`;
-  if (queuedVideoKeys.has(queueKey)) {
+  if (!force && queuedVideoKeys.has(queueKey)) {
     return false;
   }
 
@@ -377,6 +416,7 @@ function queuePostVideoProcessing({ postId, videoId, fileName }) {
     postId,
     videoId,
     fileName: normalizedFileName,
+    attempt,
   });
 
   setImmediate(processVideoQueue);
@@ -394,3 +434,4 @@ module.exports = {
   queuePostVideoProcessing,
   removeAdaptiveVideoFiles,
 };
+
