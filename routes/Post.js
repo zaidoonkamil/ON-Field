@@ -23,6 +23,7 @@ const {
 } = require("../services/videoStreaming");
 
 const MAX_POSTS = 15;
+const uploadsRoot = path.join(__dirname, "..", "uploads");
 
 async function deletePostWithFiles(post) {
   const images = post.media?.images || [];
@@ -93,6 +94,46 @@ async function safeDeleteFile(filename) {
   } catch (_) {}
 }
 
+async function keepOnlySavedFiles(files = []) {
+  const keptFiles = [];
+
+  for (const file of files) {
+    const fileName = String(file?.filename || "").trim();
+    if (!fileName) continue;
+
+    const absolutePath = path.join(uploadsRoot, fileName);
+    try {
+      await fs.access(absolutePath);
+      keptFiles.push(file);
+    } catch (_) {
+      console.warn(
+        `Skipping post upload media because file was not fully saved: ${fileName}`
+      );
+    }
+  }
+
+  return keptFiles;
+}
+
+async function ensureAllUploadedFilesSaved(req, res) {
+  const uploadedFiles = req.files || [];
+  const savedFiles = await keepOnlySavedFiles(uploadedFiles);
+
+  if (savedFiles.length === uploadedFiles.length) {
+    return savedFiles;
+  }
+
+  for (const file of savedFiles) {
+    await safeDeleteFile(file.filename);
+  }
+
+  res.status(408).json({
+    error:
+      "لم يكتمل رفع كل الملفات. تم إلغاء هذه الدفعة حتى لا ينحفظ المنشور ناقص.",
+  });
+  return null;
+}
+
 router.post(
   "/posts",
   authenticateToken,
@@ -103,8 +144,12 @@ router.post(
     const { text } = req.body;
     const images = [];
     const videos = [];
+    const savedFiles = await ensureAllUploadedFilesSaved(req, res);
+    if (!savedFiles) {
+      return;
+    }
 
-    for (const f of req.files || []) {
+    for (const f of savedFiles) {
       const main = (f.mimetype || "").split("/")[0];
       if (main === "image") images.push(f.filename);
       else if (main === "video") {
@@ -206,8 +251,12 @@ router.put(
 
       const newImages = [];
       const newVideos = [];
+      const savedFiles = await ensureAllUploadedFilesSaved(req, res);
+      if (!savedFiles) {
+        return;
+      }
 
-      for (const f of req.files || []) {
+      for (const f of savedFiles) {
         const main = (f.mimetype || "").split("/")[0];
         if (main === "image") newImages.push(f.filename);
         else if (main === "video") {

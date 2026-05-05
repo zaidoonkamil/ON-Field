@@ -46,6 +46,11 @@ const io = socketIo(server, {
 app.set("io", io);
 
 app.use(cors({ origin: "*" }));
+app.use((req, res, next) => {
+  req.setTimeout(uploadRequestTimeoutMs);
+  res.setTimeout(uploadRequestTimeoutMs);
+  next();
+});
 app.use(express.json());
 app.use("/uploads", express.static("./uploads"));
 app.use(express.static("./public")); 
@@ -68,6 +73,7 @@ server.headersTimeout = Math.max(
   uploadHeadersTimeoutMs,
   uploadRequestTimeoutMs + 1000
 );
+server.timeout = uploadRequestTimeoutMs;
 server.keepAliveTimeout = uploadKeepAliveTimeoutMs;
 
 setupSocketHandlers(io);
