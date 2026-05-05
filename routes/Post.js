@@ -225,6 +225,24 @@ router.get("/posts", optionalAuthenticateToken, async (req, res) => {
   }
 });
 
+router.get("/posts/:id", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const post = await Post.findByPk(id);
+    if (!post) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+    if (!ensureGovernorateAccess(req, res, post.governorateId)) {
+      return;
+    }
+
+    return res.json(post);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 router.put(
   "/posts/:id",
   authenticateToken,
