@@ -27,6 +27,15 @@ const playerOfMonthRoutes = require("./routes/playerOfMonth");
 
 const app = express();
 const server = http.createServer(app);
+const uploadRequestTimeoutMs =
+  Number.parseInt(process.env.UPLOAD_REQUEST_TIMEOUT_MS || "", 10) ||
+  30 * 60 * 1000;
+const uploadHeadersTimeoutMs =
+  Number.parseInt(process.env.UPLOAD_HEADERS_TIMEOUT_MS || "", 10) ||
+  31 * 60 * 1000;
+const uploadKeepAliveTimeoutMs =
+  Number.parseInt(process.env.UPLOAD_KEEP_ALIVE_TIMEOUT_MS || "", 10) ||
+  75 * 1000;
 const io = socketIo(server, {
   cors: {
     origin: "*",
@@ -53,6 +62,13 @@ app.use("/", chatRouter);
 app.use("/", whatsappRouter);
 app.use("/", superAdminRouter);
 app.use("/", playerOfMonthRoutes);
+
+server.requestTimeout = uploadRequestTimeoutMs;
+server.headersTimeout = Math.max(
+  uploadHeadersTimeoutMs,
+  uploadRequestTimeoutMs + 1000
+);
+server.keepAliveTimeout = uploadKeepAliveTimeoutMs;
 
 setupSocketHandlers(io);
 
