@@ -264,9 +264,14 @@ router.put(
 
       const newImages = [];
       const newVideos = [];
-      const savedFiles = await ensureAllUploadedFilesSaved(req, res);
-      if (!savedFiles) {
-        return;
+      const uploadResult = await ensureAllUploadedFilesSaved(req);
+      const savedFiles = uploadResult.files;
+
+      if (uploadResult.requestedVideo && !uploadResult.hasSavedVideo) {
+        return res.status(408).json({
+          error:
+            "رفع الفيديو لم يكتمل. حاول مرة ثانية، لأن السيرفر استلم صور فقط بدون أي فيديو كامل.",
+        });
       }
 
       for (const f of savedFiles) {
