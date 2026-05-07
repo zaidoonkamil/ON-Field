@@ -1,11 +1,36 @@
 const cron = require("node-cron");
-const { Op } = require("sequelize");
-const { Game, GameSlot } = require("../models");
+const sequelize = require("../config/db");
+const { GameSlot } = require("../models");
 const { sendNotificationToUser } = require("./notifications");
 
-function formatHourArabic(date) {
-  const hours = date.getHours();
-  const minutes = date.getMinutes();
+function parseMysqlDateTime(rawValue) {
+  const text = String(rawValue || "").trim();
+  const match = text.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+    hour: Number(match[4]),
+    minute: Number(match[5]),
+    second: Number(match[6] || "0"),
+  };
+}
+
+function formatHourArabic(rawValue) {
+  const parsed = parseMysqlDateTime(rawValue);
+  if (!parsed) {
+    return String(rawValue || "");
+  }
+
+  const hours = parsed.hour;
+  const minutes = parsed.minute;
   const isPM = hours >= 12;
   const hour12 = hours % 12 || 12;
   const period = isPM ? "م" : "ص";
@@ -14,36 +39,35 @@ function formatHourArabic(date) {
 }
 
 async function sendGameReminders() {
-  const now = new Date();
-  const windowStart = new Date(now.getTime() + 11 * 60 * 60 * 1000 + 55 * 60 * 1000);
-  const windowEnd   = new Date(now.getTime() + 12 * 60 * 60 * 1000);
-
-  const games = await Game.findAll({
-    where: {
-      startsAt: {
-        [Op.between]: [windowStart, windowEnd],
-      },
-      status: "open",
-    },
-    include: [
-      {
-        model: GameSlot,
-        as: "slots",
-        where: { userId: { [Op.not]: null } },
-        required: false,
-      },
-    ],
-  });
+  const [games] = await sequelize.query(`
+    SELECT id, stadiumName, DATE_FORMAT(startsAt, '%Y-%m-%d %H:%i:%s') AS startsAt
+    FROM Games
+    WHERE status = 'open'
+      AND startsAt BETWEEN
+        DATE_ADD(NOW(), INTERVAL 11 HOUR + INTERVAL 55 MINUTE)
+        AND DATE_ADD(NOW(), INTERVAL 12 HOUR)
+  `);
 
   for (const game of games) {
-    const bookedSlots = game.slots || [];
-    if (!bookedSlots.length) continue;
+    const bookedSlots = await GameSlot.findAll({
+      where: { gameId: game.id },
+      attributes: ["userId"],
+      raw: true,
+    });
 
-    const timeStr   = formatHourArabic(new Date(game.startsAt));
-    const title     = "تذكير بمباراة 🔔";
-    const message   = `اليوم مباراتكم على "${game.stadiumName}" بتوقيت الساعة ${timeStr}`;
+    const userIds = [
+      ...new Set(
+        bookedSlots
+          .map((slot) => slot.userId)
+          .filter((userId) => userId !== null && userId !== undefined)
+      ),
+    ];
 
-    const userIds = [...new Set(bookedSlots.map((slot) => slot.userId))];
+    if (!userIds.length) continue;
+
+    const timeStr = formatHourArabic(game.startsAt);
+    const title = "تذكير بمباراة 🔔";
+    const message = `اليوم مباراتكم على "${game.stadiumName}" بتوقيت الساعة ${timeStr}`;
 
     await Promise.allSettled(
       userIds.map((userId) => sendNotificationToUser(userId, message, title))
@@ -54,11 +78,17 @@ async function sendGameReminders() {
 }
 
 function startGameReminderJob() {
-  cron.schedule("*/5 * * * *", () => {
-    sendGameReminders().catch((err) =>
-      console.error("❌ خطأ في إرسال تذكير المباريات:", err)
-    );
-  });
+  cron.schedule(
+    "*/5 * * * *",
+    () => {
+      sendGameReminders().catch((err) =>
+        console.error("❌ خطأ في إرسال تذكير المباريات:", err)
+      );
+    },
+    {
+      timezone: "Asia/Baghdad",
+    }
+  );
 }
 
 module.exports = { startGameReminderJob, sendGameReminders };
