@@ -44,7 +44,7 @@ async function sendGameReminders() {
     FROM Games
     WHERE status = 'open'
       AND startsAt BETWEEN
-        DATE_ADD(NOW(), INTERVAL 11 HOUR + INTERVAL 55 MINUTE)
+        DATE_ADD(DATE_ADD(NOW(), INTERVAL 11 HOUR), INTERVAL 55 MINUTE)
         AND DATE_ADD(NOW(), INTERVAL 12 HOUR)
   `);
 

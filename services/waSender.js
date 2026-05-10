@@ -20,6 +20,9 @@ const READY_WAIT_TIMEOUT_MS = Number(
 const PROTOCOL_TIMEOUT_MS = Number(
   process.env.WHATSAPP_PROTOCOL_TIMEOUT_MS || 120000
 );
+const OPERATION_TIMEOUT_MS = Number(
+  process.env.WHATSAPP_OPERATION_TIMEOUT_MS || 45000
+);
 
 let client = null;
 let initializingPromise = null;
@@ -106,6 +109,15 @@ function enqueueClientOperation(operation) {
   const run = operationQueue.then(() => operation());
   operationQueue = run.catch(() => {});
   return run;
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(message)), timeoutMs)
+    ),
+  ]);
 }
 
 function shouldResetClientOnError(error) {
@@ -357,10 +369,18 @@ function startWhatsAppAutoInit() {
 async function resolveChatId(phone) {
   return enqueueClientOperation(async () => {
     try {
-      await ensureClientReady();
+      await withTimeout(
+        ensureClientReady(),
+        OPERATION_TIMEOUT_MS,
+        "WhatsApp client readiness check timed out"
+      );
 
       const normalizedPhone = normalizeWhatsAppPhone(phone);
-      const numberId = await client.getNumberId(normalizedPhone);
+      const numberId = await withTimeout(
+        client.getNumberId(normalizedPhone),
+        OPERATION_TIMEOUT_MS,
+        "WhatsApp number lookup timed out"
+      );
 
       if (!numberId?._serialized) {
         throw new Error("This number does not appear to have WhatsApp");
@@ -386,18 +406,27 @@ async function sendWhatsAppText(phone, message) {
 
   return enqueueClientOperation(async () => {
     try {
-      await ensureClientReady();
+      await withTimeout(
+        ensureClientReady(),
+        OPERATION_TIMEOUT_MS,
+        "WhatsApp client readiness check timed out"
+      );
 
       const normalizedPhone = normalizeWhatsAppPhone(phone);
-      const numberId = await client.getNumberId(normalizedPhone);
+      const numberId = await withTimeout(
+        client.getNumberId(normalizedPhone),
+        OPERATION_TIMEOUT_MS,
+        "WhatsApp number lookup timed out"
+      );
 
       if (!numberId?._serialized) {
         throw new Error("This number does not appear to have WhatsApp");
       }
 
-      const sentMessage = await client.sendMessage(
-        numberId._serialized,
-        String(message).trim()
+      const sentMessage = await withTimeout(
+        client.sendMessage(numberId._serialized, String(message).trim()),
+        OPERATION_TIMEOUT_MS,
+        "WhatsApp message send timed out"
       );
 
       return {
