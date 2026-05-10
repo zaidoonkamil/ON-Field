@@ -17,6 +17,9 @@ const MAX_RECONNECT_DELAY_MS = Number(
 const READY_WAIT_TIMEOUT_MS = Number(
   process.env.WHATSAPP_READY_WAIT_TIMEOUT_MS || 20000
 );
+const PROTOCOL_TIMEOUT_MS = Number(
+  process.env.WHATSAPP_PROTOCOL_TIMEOUT_MS || 120000
+);
 
 let client = null;
 let initializingPromise = null;
@@ -29,6 +32,7 @@ let connectedNumber = null;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let manualLogout = false;
+let operationQueue = Promise.resolve();
 
 function ensureSessionPath() {
   fs.mkdirSync(SESSION_PATH, { recursive: true });
@@ -96,6 +100,46 @@ function getStatus() {
     connectedNumber,
     lastError: latestError,
   };
+}
+
+function enqueueClientOperation(operation) {
+  const run = operationQueue.then(() => operation());
+  operationQueue = run.catch(() => {});
+  return run;
+}
+
+function shouldResetClientOnError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return (
+    message.includes("target closed") ||
+    message.includes("execution context was destroyed") ||
+    message.includes("detached frame") ||
+    message.includes("runtime.callfunctionon timed out") ||
+    message.includes("protocol error")
+  );
+}
+
+async function resetClientState(reason = "unknown") {
+  latestError = `WhatsApp client reset: ${reason}`;
+  authenticated = false;
+  connectedNumber = null;
+  latestQrText = null;
+  latestQrImage = null;
+  connectionStatus = "disconnected";
+
+  const activeClient = client;
+  client = null;
+  initializingPromise = null;
+
+  if (activeClient) {
+    try {
+      await activeClient.destroy();
+    } catch (_) {}
+  }
+
+  if (!manualLogout) {
+    scheduleReconnect(reason);
+  }
 }
 
 function waitForClientReady(timeoutMs = READY_WAIT_TIMEOUT_MS) {
@@ -215,6 +259,7 @@ async function initWhatsAppClient() {
     }),
     puppeteer: {
       headless: true,
+      protocolTimeout: PROTOCOL_TIMEOUT_MS,
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
     },
   });
@@ -310,19 +355,28 @@ function startWhatsAppAutoInit() {
 }
 
 async function resolveChatId(phone) {
-  await ensureClientReady();
+  return enqueueClientOperation(async () => {
+    try {
+      await ensureClientReady();
 
-  const normalizedPhone = normalizeWhatsAppPhone(phone);
-  const numberId = await client.getNumberId(normalizedPhone);
+      const normalizedPhone = normalizeWhatsAppPhone(phone);
+      const numberId = await client.getNumberId(normalizedPhone);
 
-  if (!numberId?._serialized) {
-    throw new Error("This number does not appear to have WhatsApp");
-  }
+      if (!numberId?._serialized) {
+        throw new Error("This number does not appear to have WhatsApp");
+      }
 
-  return {
-    phone: normalizedPhone,
-    chatId: numberId._serialized,
-  };
+      return {
+        phone: normalizedPhone,
+        chatId: numberId._serialized,
+      };
+    } catch (error) {
+      if (shouldResetClientOnError(error)) {
+        await resetClientState(error.message || String(error));
+      }
+      throw error;
+    }
+  });
 }
 
 async function sendWhatsAppText(phone, message) {
@@ -330,15 +384,35 @@ async function sendWhatsAppText(phone, message) {
     throw new Error("Message is required");
   }
 
-  const { phone: normalizedPhone, chatId } = await resolveChatId(phone);
-  const sentMessage = await client.sendMessage(chatId, String(message).trim());
+  return enqueueClientOperation(async () => {
+    try {
+      await ensureClientReady();
 
-  return {
-    to: normalizedPhone,
-    messageId: sentMessage?.id?._serialized || null,
-    timestamp: sentMessage?.timestamp || null,
-    status: "sent",
-  };
+      const normalizedPhone = normalizeWhatsAppPhone(phone);
+      const numberId = await client.getNumberId(normalizedPhone);
+
+      if (!numberId?._serialized) {
+        throw new Error("This number does not appear to have WhatsApp");
+      }
+
+      const sentMessage = await client.sendMessage(
+        numberId._serialized,
+        String(message).trim()
+      );
+
+      return {
+        to: normalizedPhone,
+        messageId: sentMessage?.id?._serialized || null,
+        timestamp: sentMessage?.timestamp || null,
+        status: "sent",
+      };
+    } catch (error) {
+      if (shouldResetClientOnError(error)) {
+        await resetClientState(error.message || String(error));
+      }
+      throw error;
+    }
+  });
 }
 
 module.exports = {

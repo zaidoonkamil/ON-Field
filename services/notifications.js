@@ -129,7 +129,13 @@ const sendNotificationToUser = async (userId, message, title = "Notification") =
     where: { user_id: userId }
   });
 
-  console.log("🔎 Devices for user:", userId, devices.map(d => d.toJSON()));
+  if (process.env.DEBUG_NOTIFICATION_DEVICES === "true") {
+    console.log(
+      "🔎 Devices for user:",
+      userId,
+      devices.map((d) => d.toJSON())
+    );
+  }
 
   const playerIds = [...new Set(devices.map(d => d.player_id).filter(Boolean))];
 
