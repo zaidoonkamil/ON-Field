@@ -58,6 +58,52 @@ function cleanupStaleLockFiles() {
   }
 }
 
+// Chrome cache dirs grow very large over time — safe to delete without losing auth
+const CHROME_CACHE_DIRS = [
+  "Cache",
+  "Code Cache",
+  "GPUCache",
+  "DawnCache",
+  "blob_storage",
+  "logs",
+  "Default/Cache",
+  "Default/Code Cache",
+  "Default/GPUCache",
+  "Default/Service Worker/CacheStorage",
+];
+
+function cleanupSessionCache() {
+  const sessionDir = path.join(SESSION_PATH, `session-${CLIENT_ID}`);
+  if (!fs.existsSync(sessionDir)) return { cleaned: 0, errors: 0 };
+
+  let cleaned = 0;
+  let errors = 0;
+  for (const rel of CHROME_CACHE_DIRS) {
+    const target = path.join(sessionDir, rel);
+    try {
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { force: true, recursive: true });
+        cleaned++;
+      }
+    } catch (_) {
+      errors++;
+    }
+  }
+  return { cleaned, errors };
+}
+
+// Wipe the entire session dir — WhatsApp will need QR scan after this
+function deleteWhatsAppSession() {
+  const sessionDir = path.join(SESSION_PATH, `session-${CLIENT_ID}`);
+  if (!fs.existsSync(sessionDir)) return false;
+  try {
+    fs.rmSync(sessionDir, { force: true, recursive: true });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function ensureSessionPath() {
   fs.mkdirSync(SESSION_PATH, { recursive: true });
 }
@@ -489,6 +535,7 @@ function startWhatsAppAutoInit() {
 
   // Clean up before the very first launch in case the previous run crashed
   cleanupStaleLockFiles();
+  cleanupSessionCache();
   scheduleReconnect("server_boot");
 }
 
@@ -578,4 +625,6 @@ module.exports = {
   normalizeWhatsAppPhone,
   sendWhatsAppText,
   startWhatsAppAutoInit,
+  cleanupSessionCache,
+  deleteWhatsAppSession,
 };

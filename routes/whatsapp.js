@@ -10,6 +10,8 @@ const {
   logoutWhatsApp,
   normalizeWhatsAppPhone,
   sendWhatsAppText,
+  cleanupSessionCache,
+  deleteWhatsAppSession,
 } = require("../services/waSender");
 const { createOtp, verifyOtp } = require("../services/otpService");
 
@@ -141,6 +143,38 @@ router.get("/whatsapp/qr", authenticateToken, async (req, res) => {
     return res.status(200).json({ success: true, ...qr });
   } catch (error) {
     console.error("WhatsApp QR error:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/whatsapp/session/cleanup", authenticateToken, async (req, res) => {
+  try {
+    if (!ensureAdmin(req, res)) return;
+    const result = cleanupSessionCache();
+    return res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    console.error("WhatsApp session cleanup error:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/whatsapp/session/reset", authenticateToken, async (req, res) => {
+  try {
+    if (!ensureAdmin(req, res)) return;
+
+    // Must logout first to kill the browser
+    try { await logoutWhatsApp(); } catch (_) {}
+
+    const deleted = deleteWhatsAppSession();
+    return res.status(200).json({
+      success: true,
+      deleted,
+      message: deleted
+        ? "تم حذف الجلسة. ستحتاج لمسح QR من جديد."
+        : "لم يوجد ملف جلسة للحذف",
+    });
+  } catch (error) {
+    console.error("WhatsApp session reset error:", error.message);
     return res.status(500).json({ error: error.message });
   }
 });
