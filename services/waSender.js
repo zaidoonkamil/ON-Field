@@ -1,30 +1,17 @@
 const path = require("path");
 const fs = require("fs");
 const qrcode = require("qrcode");
-const { Client, LocalAuth } = require("whatsapp-web.js");
 
 const SESSION_PATH = process.env.WHATSAPP_SESSION_PATH
   ? path.resolve(process.env.WHATSAPP_SESSION_PATH)
   : path.join(__dirname, "..", ".wwebjs_auth");
 const CLIENT_ID = process.env.WHATSAPP_CLIENT_ID || "on-field";
 const AUTO_INIT = process.env.WHATSAPP_AUTO_INIT !== "false";
-const RECONNECT_DELAY_MS = Number(
-  process.env.WHATSAPP_RECONNECT_DELAY_MS || 15000
-);
-const MAX_RECONNECT_DELAY_MS = Number(
-  process.env.WHATSAPP_MAX_RECONNECT_DELAY_MS || 120000
-);
-const READY_WAIT_TIMEOUT_MS = Number(
-  process.env.WHATSAPP_READY_WAIT_TIMEOUT_MS || 20000
-);
-const PROTOCOL_TIMEOUT_MS = Number(
-  process.env.WHATSAPP_PROTOCOL_TIMEOUT_MS || 120000
-);
-const OPERATION_TIMEOUT_MS = Number(
-  process.env.WHATSAPP_OPERATION_TIMEOUT_MS || 20000
-);
+const RECONNECT_DELAY_MS = Number(process.env.WHATSAPP_RECONNECT_DELAY_MS || 15000);
+const MAX_RECONNECT_DELAY_MS = Number(process.env.WHATSAPP_MAX_RECONNECT_DELAY_MS || 120000);
+const OPERATION_TIMEOUT_MS = Number(process.env.WHATSAPP_OPERATION_TIMEOUT_MS || 20000);
 
-let client = null;
+let sock = null;
 let initializingPromise = null;
 let latestQrText = null;
 let latestQrImage = null;
@@ -37,28 +24,27 @@ let reconnectAttempts = 0;
 let manualLogout = false;
 let isShuttingDown = false;
 
-// Explicit queue so we can drain it instantly on disconnect
+// Explicit queue — can be drained instantly on disconnect
 let operationQueueList = [];
 let operationQueueRunning = false;
 
-// Chrome writes these lock files on start; if the process is killed hard they remain
-// and prevent a new browser from using the same profile directory.
-function cleanupStaleLockFiles() {
-  const sessionDir = path.join(SESSION_PATH, `session-${CLIENT_ID}`);
-  const targets = [
-    path.join(sessionDir, "SingletonLock"),
-    path.join(sessionDir, "SingletonSocket"),
-    path.join(sessionDir, "SingletonCookie"),
-    path.join(sessionDir, ".com.google.Chrome"),
-  ];
-  for (const f of targets) {
-    try {
-      if (fs.existsSync(f)) fs.rmSync(f, { force: true, recursive: true });
-    } catch (_) {}
-  }
+// Silences Baileys internal logs
+const silentLogger = {
+  level: "silent",
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  fatal: () => {},
+  child: () => silentLogger,
+};
+
+function getAuthDir() {
+  return path.join(SESSION_PATH, `session-${CLIENT_ID}`);
 }
 
-// Chrome cache dirs grow very large over time — safe to delete without losing auth
+// Chrome cache dirs left over from the old whatsapp-web.js — safe to delete
 const CHROME_CACHE_DIRS = [
   "Cache",
   "Code Cache",
@@ -73,7 +59,7 @@ const CHROME_CACHE_DIRS = [
 ];
 
 function cleanupSessionCache() {
-  const sessionDir = path.join(SESSION_PATH, `session-${CLIENT_ID}`);
+  const sessionDir = getAuthDir();
   if (!fs.existsSync(sessionDir)) return { cleaned: 0, errors: 0 };
 
   let cleaned = 0;
@@ -92,9 +78,8 @@ function cleanupSessionCache() {
   return { cleaned, errors };
 }
 
-// Wipe the entire session dir — WhatsApp will need QR scan after this
 function deleteWhatsAppSession() {
-  const sessionDir = path.join(SESSION_PATH, `session-${CLIENT_ID}`);
+  const sessionDir = getAuthDir();
   if (!fs.existsSync(sessionDir)) return false;
   try {
     fs.rmSync(sessionDir, { force: true, recursive: true });
@@ -102,10 +87,6 @@ function deleteWhatsAppSession() {
   } catch (_) {
     return false;
   }
-}
-
-function ensureSessionPath() {
-  fs.mkdirSync(SESSION_PATH, { recursive: true });
 }
 
 function clearReconnectTimer() {
@@ -116,14 +97,11 @@ function clearReconnectTimer() {
 }
 
 function getReconnectDelay() {
-  const delay = RECONNECT_DELAY_MS * Math.max(1, reconnectAttempts);
-  return Math.min(delay, MAX_RECONNECT_DELAY_MS);
+  return Math.min(RECONNECT_DELAY_MS * Math.max(1, reconnectAttempts), MAX_RECONNECT_DELAY_MS);
 }
 
 function scheduleReconnect(reason = "unknown") {
-  if (!AUTO_INIT || manualLogout || isShuttingDown || reconnectTimer || initializingPromise) {
-    return;
-  }
+  if (!AUTO_INIT || manualLogout || isShuttingDown || reconnectTimer || initializingPromise) return;
 
   reconnectAttempts += 1;
   const delay = getReconnectDelay();
@@ -143,21 +121,13 @@ function scheduleReconnect(reason = "unknown") {
 }
 
 function normalizeWhatsAppPhone(phone = "") {
-  let value = String(phone).trim();
+  let value = String(phone).trim().replace(/[^\d+]/g, "");
 
-  if (!value) {
-    throw new Error("Phone number is required");
-  }
-
-  value = value.replace(/[^\d+]/g, "");
-
+  if (!value) throw new Error("Phone number is required");
   if (value.startsWith("+")) value = value.slice(1);
   if (value.startsWith("00")) value = value.slice(2);
   if (value.startsWith("0")) value = `964${value.slice(1)}`;
-
-  if (!/^\d{8,15}$/.test(value)) {
-    throw new Error("Phone number format is invalid");
-  }
+  if (!/^\d{8,15}$/.test(value)) throw new Error("Phone number format is invalid");
 
   return value;
 }
@@ -192,12 +162,10 @@ async function processOperationQueue() {
   operationQueueRunning = false;
 }
 
-// States where sending is impossible without human intervention or server restart
 const UNUSABLE_STATES = new Set([
   "disconnected",
   "reconnecting",
   "failed",
-  "auth_failure",
   "idle",
   "qr_ready",
 ]);
@@ -216,9 +184,7 @@ function enqueueClientOperation(operation) {
   throwIfUnusable();
   return new Promise((resolve, reject) => {
     operationQueueList.push({ operation, resolve, reject });
-    if (!operationQueueRunning) {
-      processOperationQueue();
-    }
+    if (!operationQueueRunning) processOperationQueue();
   });
 }
 
@@ -231,159 +197,16 @@ function withTimeout(promise, timeoutMs, message) {
   ]);
 }
 
-function shouldResetClientOnError(error) {
-  const message = String(error?.message || error || "").toLowerCase();
-  return (
-    message.includes("target closed") ||
-    message.includes("execution context was destroyed") ||
-    message.includes("detached frame") ||
-    message.includes("runtime.callfunctionon timed out") ||
-    message.includes("protocol error")
-  );
-}
-
-async function destroyClient(instance) {
-  if (!instance) return;
-  try {
-    await Promise.race([
-      instance.destroy(),
-      new Promise((resolve) => setTimeout(resolve, 8000)),
-    ]);
-  } catch (_) {}
-}
-
-async function resetClientState(reason = "unknown") {
-  latestError = `WhatsApp client reset: ${reason}`;
-  authenticated = false;
-  connectedNumber = null;
-  latestQrText = null;
-  latestQrImage = null;
-  connectionStatus = "disconnected";
-
-  // Fail all pending operations immediately
-  drainQueueWithError("خدمة WhatsApp توقفت مؤقتاً، يرجى المحاولة لاحقاً");
-
-  const activeClient = client;
-  client = null;
-  initializingPromise = null;
-
-  await destroyClient(activeClient);
-  cleanupStaleLockFiles();
-
-  if (!manualLogout && !isShuttingDown) {
-    scheduleReconnect(reason);
-  }
-}
-
-function waitForClientReady(timeoutMs = READY_WAIT_TIMEOUT_MS) {
-  if (client && connectionStatus === "ready") {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-
-    const timer = setInterval(() => {
-      if (client && connectionStatus === "ready") {
-        clearInterval(timer);
-        resolve();
-        return;
-      }
-
-      if (Date.now() - startedAt >= timeoutMs) {
-        clearInterval(timer);
-        reject(
-          new Error(
-            "WhatsApp client is not ready yet. Wait a few seconds and try again."
-          )
-        );
-      }
-    }, 500);
-  });
-}
-
-async function buildQrImage(qrText) {
-  latestQrText = qrText;
-  latestQrImage = await qrcode.toDataURL(qrText);
-}
-
-function bindClientEvents(instance) {
-  instance.on("qr", async (qrText) => {
-    clearReconnectTimer();
-    connectionStatus = "qr_ready";
-    latestError = null;
-    connectedNumber = null;
-    authenticated = false;
-
-    try {
-      await buildQrImage(qrText);
-    } catch (error) {
-      latestError = `QR generation failed: ${error.message}`;
-    }
-  });
-
-  instance.on("authenticated", () => {
-    clearReconnectTimer();
-    reconnectAttempts = 0;
-    authenticated = true;
-    latestError = null;
-    connectionStatus = "authenticated";
-  });
-
-  instance.on("ready", async () => {
-    clearReconnectTimer();
-    reconnectAttempts = 0;
-    connectionStatus = "ready";
-    latestQrText = null;
-    latestQrImage = null;
-    latestError = null;
-
-    try {
-      const wid = instance.info?.wid?._serialized || "";
-      connectedNumber = wid.replace("@c.us", "") || null;
-    } catch (_) {
-      connectedNumber = null;
-    }
-  });
-
-  instance.on("auth_failure", (message) => {
-    clearReconnectTimer();
-    authenticated = false;
-    connectionStatus = "auth_failure";
-    latestError = message || "Authentication failed";
-  });
-
-  // Must destroy the old browser process before scheduling reconnect,
-  // otherwise the new browser launch will fail with "already running".
-  instance.on("disconnected", async (reason) => {
-    authenticated = false;
-    connectionStatus = "disconnected";
-    latestError = reason || "Client disconnected";
-    latestQrText = null;
-    latestQrImage = null;
-    connectedNumber = null;
-
-    // Fail all pending operations immediately instead of letting them time out
-    drainQueueWithError("خدمة WhatsApp انقطعت، يرجى المحاولة لاحقاً");
-
-    const staleClient = client;
-    client = null;
-    initializingPromise = null;
-
-    await destroyClient(staleClient);
-    cleanupStaleLockFiles();
-
-    if (!manualLogout && !isShuttingDown) {
-      scheduleReconnect(reason || "Client disconnected");
-    }
-  });
+async function getQrCode() {
+  return {
+    status: connectionStatus,
+    qrText: latestQrText,
+    qrImage: latestQrImage,
+  };
 }
 
 async function initWhatsAppClient() {
-  if (client) {
-    return getStatus();
-  }
-
+  if (sock) return getStatus();
   if (initializingPromise) {
     await initializingPromise;
     return getStatus();
@@ -393,47 +216,112 @@ async function initWhatsAppClient() {
   latestError = null;
   manualLogout = false;
   clearReconnectTimer();
-  ensureSessionPath();
 
-  // Remove stale lock files before every browser launch attempt
-  cleanupStaleLockFiles();
+  fs.mkdirSync(getAuthDir(), { recursive: true });
+  cleanupSessionCache();
 
-  client = new Client({
-    authStrategy: new LocalAuth({
-      clientId: CLIENT_ID,
-      dataPath: SESSION_PATH,
-    }),
-    puppeteer: {
-      headless: true,
-      protocolTimeout: PROTOCOL_TIMEOUT_MS,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--no-first-run",
-        "--no-zygote",
-        "--disable-gpu",
-      ],
-    },
-  });
+  initializingPromise = (async () => {
+    const {
+      default: makeWASocket,
+      useMultiFileAuthState,
+      DisconnectReason,
+      fetchLatestBaileysVersion,
+    } = await import("@whiskeysockets/baileys");
 
-  bindClientEvents(client);
+    const { Boom } = await import("@hapi/boom");
 
-  initializingPromise = client.initialize()
-    .catch(async (error) => {
+    const { state, saveCreds } = await useMultiFileAuthState(getAuthDir());
+
+    let version;
+    try {
+      ({ version } = await fetchLatestBaileysVersion());
+    } catch {
+      version = [2, 3000, 1017531287];
+    }
+
+    const socket = makeWASocket({
+      version,
+      auth: state,
+      printQRInTerminal: false,
+      logger: silentLogger,
+      browser: ["ON-Field", "Chrome", "1.0.0"],
+      connectTimeoutMs: 30000,
+      defaultQueryTimeoutMs: 20000,
+      keepAliveIntervalMs: 25000,
+      retryRequestDelayMs: 2000,
+    });
+
+    socket.ev.on("creds.update", saveCreds);
+
+    socket.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        connectionStatus = "qr_ready";
+        latestError = null;
+        connectedNumber = null;
+        authenticated = false;
+        try {
+          latestQrText = qr;
+          latestQrImage = await qrcode.toDataURL(qr);
+        } catch (err) {
+          latestError = `QR generation failed: ${err.message}`;
+        }
+      }
+
+      if (connection === "open") {
+        clearReconnectTimer();
+        reconnectAttempts = 0;
+        connectionStatus = "ready";
+        authenticated = true;
+        latestQrText = null;
+        latestQrImage = null;
+        latestError = null;
+        try {
+          connectedNumber = socket.user?.id?.split(":")?.[0] || null;
+        } catch {
+          connectedNumber = null;
+        }
+      }
+
+      if (connection === "close") {
+        const boom = lastDisconnect?.error ? new Boom(lastDisconnect.error) : null;
+        const statusCode = boom?.output?.statusCode;
+        const loggedOut = statusCode === DisconnectReason.loggedOut;
+        const reason = boom?.message || "connection closed";
+
+        authenticated = false;
+        latestQrText = null;
+        latestQrImage = null;
+        connectedNumber = null;
+        connectionStatus = "disconnected";
+        latestError = reason;
+
+        drainQueueWithError("خدمة WhatsApp انقطعت، يرجى المحاولة لاحقاً");
+
+        sock = null;
+        initializingPromise = null;
+
+        if (loggedOut) {
+          // WhatsApp revoked the session — delete auth files so next init shows QR
+          deleteWhatsAppSession();
+          connectionStatus = "idle";
+          if (AUTO_INIT && !manualLogout && !isShuttingDown) {
+            scheduleReconnect("logged out");
+          }
+        } else if (!manualLogout && !isShuttingDown) {
+          scheduleReconnect(reason);
+        }
+      }
+    });
+
+    sock = socket;
+  })()
+    .catch((error) => {
       latestError = error.message;
       connectionStatus = "failed";
-
-      const failedClient = client;
-      client = null;
-
-      await destroyClient(failedClient);
-      cleanupStaleLockFiles();
-
-      if (!manualLogout && !isShuttingDown) {
-        scheduleReconnect(error.message);
-      }
+      sock = null;
+      if (!manualLogout && !isShuttingDown) scheduleReconnect(error.message);
       throw error;
     })
     .finally(() => {
@@ -444,58 +332,20 @@ async function initWhatsAppClient() {
   return getStatus();
 }
 
-async function ensureClientReady() {
-  if (!client && AUTO_INIT && !initializingPromise) {
-    try {
-      await initWhatsAppClient();
-    } catch (_) {
-    }
-  }
-
-  if (client && connectionStatus === "ready") {
-    return;
-  }
-
-  await waitForClientReady();
-
-  if (!client || connectionStatus !== "ready") {
-    throw new Error(
-      "WhatsApp client is not ready yet. Wait a few seconds and try again."
-    );
-  }
-}
-
-async function getQrCode() {
-  return {
-    status: connectionStatus,
-    qrText: latestQrText,
-    qrImage: latestQrImage,
-  };
-}
-
 async function logoutWhatsApp() {
   manualLogout = true;
   clearReconnectTimer();
+  drainQueueWithError("تم تسجيل الخروج من WhatsApp");
 
-  if (!client) {
-    connectionStatus = "idle";
-    authenticated = false;
-    latestQrText = null;
-    latestQrImage = null;
-    connectedNumber = null;
-    return { success: true, status: connectionStatus };
-  }
-
-  const activeClient = client;
-  client = null;
+  const activeSock = sock;
+  sock = null;
   initializingPromise = null;
 
-  try {
-    await activeClient.logout();
-  } catch (_) {}
+  if (activeSock) {
+    try { await activeSock.logout(); } catch (_) {}
+  }
 
-  await destroyClient(activeClient);
-  cleanupStaleLockFiles();
+  deleteWhatsAppSession();
 
   latestQrText = null;
   latestQrImage = null;
@@ -507,114 +357,58 @@ async function logoutWhatsApp() {
   return { success: true, status: connectionStatus };
 }
 
+async function sendWhatsAppText(phone, message) {
+  if (!message || !String(message).trim()) throw new Error("Message is required");
+
+  return enqueueClientOperation(async () => {
+    if (!sock || connectionStatus !== "ready") {
+      throw new Error("خدمة WhatsApp غير متصلة حالياً، يرجى المحاولة لاحقاً");
+    }
+
+    const normalizedPhone = normalizeWhatsAppPhone(phone);
+
+    const results = await withTimeout(
+      sock.onWhatsApp(normalizedPhone),
+      OPERATION_TIMEOUT_MS,
+      "WhatsApp number lookup timed out"
+    );
+
+    const result = Array.isArray(results) ? results[0] : results;
+
+    if (!result?.exists) throw new Error("This number does not appear to have WhatsApp");
+
+    const sent = await withTimeout(
+      sock.sendMessage(result.jid, { text: String(message).trim() }),
+      OPERATION_TIMEOUT_MS,
+      "WhatsApp message send timed out"
+    );
+
+    return {
+      to: normalizedPhone,
+      messageId: sent?.key?.id || null,
+      timestamp: sent?.messageTimestamp || null,
+      status: "sent",
+    };
+  });
+}
+
 async function gracefulShutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;
   clearReconnectTimer();
-
-  const activeClient = client;
-  client = null;
-
-  await destroyClient(activeClient);
+  drainQueueWithError("Server shutting down");
+  const activeSock = sock;
+  sock = null;
+  if (activeSock) { try { activeSock.end(); } catch (_) {} }
 }
 
-process.once("SIGTERM", async () => {
-  await gracefulShutdown();
-  process.exit(0);
-});
-
-process.once("SIGINT", async () => {
-  await gracefulShutdown();
-  process.exit(0);
-});
+process.once("SIGTERM", async () => { await gracefulShutdown(); process.exit(0); });
+process.once("SIGINT", async () => { await gracefulShutdown(); process.exit(0); });
 
 function startWhatsAppAutoInit() {
-  if (!AUTO_INIT) {
-    return;
-  }
-
-  // Clean up before the very first launch in case the previous run crashed
-  cleanupStaleLockFiles();
+  if (!AUTO_INIT) return;
   cleanupSessionCache();
   scheduleReconnect("server_boot");
-}
-
-async function resolveChatId(phone) {
-  return enqueueClientOperation(async () => {
-    try {
-      await withTimeout(
-        ensureClientReady(),
-        OPERATION_TIMEOUT_MS,
-        "WhatsApp client readiness check timed out"
-      );
-
-      const normalizedPhone = normalizeWhatsAppPhone(phone);
-      const numberId = await withTimeout(
-        client.getNumberId(normalizedPhone),
-        OPERATION_TIMEOUT_MS,
-        "WhatsApp number lookup timed out"
-      );
-
-      if (!numberId?._serialized) {
-        throw new Error("This number does not appear to have WhatsApp");
-      }
-
-      return {
-        phone: normalizedPhone,
-        chatId: numberId._serialized,
-      };
-    } catch (error) {
-      if (shouldResetClientOnError(error)) {
-        await resetClientState(error.message || String(error));
-      }
-      throw error;
-    }
-  });
-}
-
-async function sendWhatsAppText(phone, message) {
-  if (!message || !String(message).trim()) {
-    throw new Error("Message is required");
-  }
-
-  return enqueueClientOperation(async () => {
-    try {
-      await withTimeout(
-        ensureClientReady(),
-        OPERATION_TIMEOUT_MS,
-        "WhatsApp client readiness check timed out"
-      );
-
-      const normalizedPhone = normalizeWhatsAppPhone(phone);
-      const numberId = await withTimeout(
-        client.getNumberId(normalizedPhone),
-        OPERATION_TIMEOUT_MS,
-        "WhatsApp number lookup timed out"
-      );
-
-      if (!numberId?._serialized) {
-        throw new Error("This number does not appear to have WhatsApp");
-      }
-
-      const sentMessage = await withTimeout(
-        client.sendMessage(numberId._serialized, String(message).trim()),
-        OPERATION_TIMEOUT_MS,
-        "WhatsApp message send timed out"
-      );
-
-      return {
-        to: normalizedPhone,
-        messageId: sentMessage?.id?._serialized || null,
-        timestamp: sentMessage?.timestamp || null,
-        status: "sent",
-      };
-    } catch (error) {
-      if (shouldResetClientOnError(error)) {
-        await resetClientState(error.message || String(error));
-      }
-      throw error;
-    }
-  });
 }
 
 module.exports = {
