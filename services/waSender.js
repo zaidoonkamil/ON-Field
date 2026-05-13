@@ -21,7 +21,7 @@ const PROTOCOL_TIMEOUT_MS = Number(
   process.env.WHATSAPP_PROTOCOL_TIMEOUT_MS || 120000
 );
 const OPERATION_TIMEOUT_MS = Number(
-  process.env.WHATSAPP_OPERATION_TIMEOUT_MS || 45000
+  process.env.WHATSAPP_OPERATION_TIMEOUT_MS || 20000
 );
 
 let client = null;
@@ -35,8 +35,11 @@ let connectedNumber = null;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let manualLogout = false;
-let operationQueue = Promise.resolve();
 let isShuttingDown = false;
+
+// Explicit queue so we can drain it instantly on disconnect
+let operationQueueList = [];
+let operationQueueRunning = false;
 
 // Chrome writes these lock files on start; if the process is killed hard they remain
 // and prevent a new browser from using the same profile directory.
@@ -123,10 +126,54 @@ function getStatus() {
   };
 }
 
+function drainQueueWithError(message) {
+  const pending = operationQueueList.splice(0);
+  for (const item of pending) {
+    item.reject(new Error(message));
+  }
+}
+
+async function processOperationQueue() {
+  operationQueueRunning = true;
+  while (operationQueueList.length > 0) {
+    const item = operationQueueList.shift();
+    try {
+      item.resolve(await item.operation());
+    } catch (err) {
+      item.reject(err);
+    }
+  }
+  operationQueueRunning = false;
+}
+
+// States where sending is impossible without human intervention or server restart
+const UNUSABLE_STATES = new Set([
+  "disconnected",
+  "reconnecting",
+  "failed",
+  "auth_failure",
+  "idle",
+  "qr_ready",
+]);
+
+function throwIfUnusable() {
+  if (UNUSABLE_STATES.has(connectionStatus) && !initializingPromise) {
+    const msg =
+      connectionStatus === "qr_ready"
+        ? "WhatsApp بحاجة لمسح QR قبل إرسال الرسائل"
+        : "خدمة WhatsApp غير متصلة حالياً، يرجى المحاولة لاحقاً";
+    throw new Error(msg);
+  }
+}
+
 function enqueueClientOperation(operation) {
-  const run = operationQueue.then(() => operation());
-  operationQueue = run.catch(() => {});
-  return run;
+  throwIfUnusable();
+  return new Promise((resolve, reject) => {
+    operationQueueList.push({ operation, resolve, reject });
+    if (!operationQueueRunning) {
+      processOperationQueue();
+    }
+  });
 }
 
 function withTimeout(promise, timeoutMs, message) {
@@ -166,6 +213,9 @@ async function resetClientState(reason = "unknown") {
   latestQrText = null;
   latestQrImage = null;
   connectionStatus = "disconnected";
+
+  // Fail all pending operations immediately
+  drainQueueWithError("خدمة WhatsApp توقفت مؤقتاً، يرجى المحاولة لاحقاً");
 
   const activeClient = client;
   client = null;
@@ -266,6 +316,9 @@ function bindClientEvents(instance) {
     latestQrText = null;
     latestQrImage = null;
     connectedNumber = null;
+
+    // Fail all pending operations immediately instead of letting them time out
+    drainQueueWithError("خدمة WhatsApp انقطعت، يرجى المحاولة لاحقاً");
 
     const staleClient = client;
     client = null;
