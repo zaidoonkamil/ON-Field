@@ -13,7 +13,6 @@ const {
   cleanupSessionCache,
   deleteWhatsAppSession,
 } = require("../services/waSender");
-const { createOtp, verifyOtp } = require("../services/otpService");
 
 const router = express.Router();
 const upload = multer();
@@ -35,7 +34,9 @@ function parseList(value) {
 
 function ensureAdmin(req, res) {
   if (!["admin", "super_admin"].includes(req.user?.role)) {
-    res.status(403).json({ error: "Only admin or super admin can use WhatsApp service" });
+    res
+      .status(403)
+      .json({ error: "Only admin or super admin can use WhatsApp service" });
     return false;
   }
 
@@ -58,16 +59,13 @@ router.post("/whatsapp/otp/request", upload.none(), async (req, res) => {
       return res.status(400).json({ error: "phone is required" });
     }
 
-    const otp = createOtp(phone);
-    const message = `رمز التحقق الخاص بك هو: ${otp.code}\nصالح لمدة ${Math.floor(otp.expiresInSeconds / 60)} دقائق.`;
-
-    await sendWhatsAppText(otp.phone, message);
-
     return res.status(200).json({
       success: true,
-      phone: otp.phone,
-      expiresInSeconds: otp.expiresInSeconds,
-      retryAfterSeconds: otp.retryAfterSeconds,
+      phone: normalizeWhatsAppPhone(phone),
+      expiresInSeconds: 0,
+      retryAfterSeconds: 0,
+      bypassed: true,
+      message: "OTP bypassed. Booking can continue without WhatsApp verification.",
     });
   } catch (error) {
     console.error("WhatsApp OTP request error:", error.message);
@@ -77,21 +75,22 @@ router.post("/whatsapp/otp/request", upload.none(), async (req, res) => {
 
 router.post("/whatsapp/otp/verify", upload.none(), async (req, res) => {
   try {
-    const { phone, code } = req.body;
+    const { phone } = req.body;
 
-    if (!phone || !code) {
-      return res.status(400).json({ error: "phone and code are required" });
+    if (!phone) {
+      return res.status(400).json({ error: "phone is required" });
     }
 
-    const result = verifyOtp(phone, code);
-    const user = await User.findOne({ where: { phone: result.phone } });
+    const normalizedPhone = normalizeWhatsAppPhone(phone);
+    const user = await User.findOne({ where: { phone: normalizedPhone } });
 
     if (!user) {
       return res.status(200).json({
         success: true,
         verified: true,
-        phone: result.phone,
+        phone: normalizedPhone,
         userExists: false,
+        bypassed: true,
       });
     }
 
@@ -100,8 +99,9 @@ router.post("/whatsapp/otp/verify", upload.none(), async (req, res) => {
     return res.status(200).json({
       success: true,
       verified: true,
-      phone: result.phone,
+      phone: normalizedPhone,
       userExists: true,
+      bypassed: true,
       token,
       user: {
         id: user.id,
@@ -163,15 +163,17 @@ router.post("/whatsapp/session/reset", authenticateToken, async (req, res) => {
     if (!ensureAdmin(req, res)) return;
 
     // Must logout first to kill the browser
-    try { await logoutWhatsApp(); } catch (_) {}
+    try {
+      await logoutWhatsApp();
+    } catch (_) {}
 
     const deleted = deleteWhatsAppSession();
     return res.status(200).json({
       success: true,
       deleted,
       message: deleted
-        ? "تم حذف الجلسة. ستحتاج لمسح QR من جديد."
-        : "لم يوجد ملف جلسة للحذف",
+        ? "\u062a\u0645 \u062d\u0630\u0641 \u0627\u0644\u062c\u0644\u0633\u0629. \u0633\u062a\u062d\u062a\u0627\u062c \u0644\u0645\u0633\u062d QR \u0645\u0646 \u062c\u062f\u064a\u062f."
+        : "\u0644\u0645 \u064a\u0648\u062c\u062f \u0645\u0644\u0641 \u062c\u0644\u0633\u0629 \u0644\u0644\u062d\u0630\u0641",
     });
   } catch (error) {
     console.error("WhatsApp session reset error:", error.message);
@@ -261,7 +263,10 @@ router.post("/whatsapp/send-bulk", authenticateToken, upload.none(), async (req,
       for (const user of users) {
         if (!user.phone) continue;
         const normalizedPhone = normalizeWhatsAppPhone(user.phone);
-        targets.set(normalizedPhone, { phone: normalizedPhone, user_id: user.id });
+        targets.set(normalizedPhone, {
+          phone: normalizedPhone,
+          user_id: user.id,
+        });
       }
     }
 
