@@ -21,6 +21,12 @@ const {
   queuePostVideoProcessing,
   removeAdaptiveVideoFiles,
 } = require("../services/videoStreaming");
+const {
+  deleteRemoteMediaItems,
+  isRemoteMediaEnabled,
+  uploadPostImage,
+  uploadPostVideo,
+} = require("../services/postMediaStorage");
 
 const MAX_POSTS = 15;
 const uploadsRoot = path.join(__dirname, "..", "uploads");
@@ -74,6 +80,21 @@ function parseMediaList(value) {
 
 async function safeDeleteFile(filename) {
   try {
+    const isRemoteMediaReference =
+      (typeof filename === "string" &&
+        /^(https?:)?\/\//i.test(filename.trim())) ||
+      (filename &&
+        typeof filename === "object" &&
+        !Array.isArray(filename) &&
+        [filename.original, filename.adaptive].some(
+          (value) => typeof value === "string" && /^(https?:)?\/\//i.test(value.trim())
+        ));
+
+    if (isRemoteMediaEnabled() && isRemoteMediaReference) {
+      await deleteRemoteMediaItems([filename]);
+      return;
+    }
+
     if (filename && typeof filename === "object" && !Array.isArray(filename)) {
       if (filename.adaptive) {
         await removeAdaptiveVideoFiles(filename.adaptive);
@@ -92,6 +113,51 @@ async function safeDeleteFile(filename) {
     const filePath = path.join(__dirname, "..", "uploads", filename);
     await fs.unlink(filePath);
   } catch (_) {}
+}
+
+async function removeLocalUploadedFile(file) {
+  const fileName = String(file?.filename || "").trim();
+  if (!fileName) return;
+
+  const targetPath = path.join(uploadsRoot, fileName);
+  await fs.unlink(targetPath).catch(() => {});
+}
+
+async function uploadSavedFilesToRemoteMedia(savedFiles = []) {
+  const images = [];
+  const videos = [];
+  const uploadedRemoteItems = [];
+
+  try {
+    for (const file of savedFiles) {
+      const main = String(file?.mimetype || "").split("/")[0];
+
+      if (main === "image") {
+        const result = await uploadPostImage(file);
+        images.push(result.url);
+        uploadedRemoteItems.push(result.url);
+        await removeLocalUploadedFile(file);
+        continue;
+      }
+
+      if (main === "video") {
+        const result = await uploadPostVideo(file);
+        const video = result.video;
+        videos.push(video);
+        uploadedRemoteItems.push(video);
+        await removeLocalUploadedFile(file);
+        continue;
+      }
+
+      throw new Error("Only images and videos are allowed");
+    }
+
+    return { images, videos };
+  } catch (error) {
+    await deleteRemoteMediaItems(uploadedRemoteItems).catch(() => {});
+    await Promise.all(savedFiles.map((file) => removeLocalUploadedFile(file)));
+    throw error;
+  }
 }
 
 async function keepOnlySavedFiles(files = []) {
@@ -151,8 +217,6 @@ router.post(
   async (req, res) => {
   try {
     const { text } = req.body;
-    const images = [];
-    const videos = [];
     const uploadResult = await ensureAllUploadedFilesSaved(req);
     const savedFiles = uploadResult.files;
 
@@ -162,15 +226,25 @@ router.post(
       });
     }
 
-    for (const f of savedFiles) {
-      const main = (f.mimetype || "").split("/")[0];
-      if (main === "image") images.push(f.filename);
-      else if (main === "video") {
-        videos.push(createPostVideoEntry(f.filename));
-      } else {
-        return res.status(400).json({ error: "Only images and videos are allowed" });
-      }
-    }
+    const remoteMediaEnabled = isRemoteMediaEnabled();
+    const { images, videos } = remoteMediaEnabled
+      ? await uploadSavedFilesToRemoteMedia(savedFiles)
+      : (() => {
+          const localImages = [];
+          const localVideos = [];
+
+          for (const f of savedFiles) {
+            const main = (f.mimetype || "").split("/")[0];
+            if (main === "image") localImages.push(f.filename);
+            else if (main === "video") {
+              localVideos.push(createPostVideoEntry(f.filename));
+            } else {
+              throw new Error("Only images and videos are allowed");
+            }
+          }
+
+          return { images: localImages, videos: localVideos };
+        })();
 
     const user = await User.findByPk(Number(req.user.id), {
       attributes: ["id", "governorateId"],
@@ -184,12 +258,14 @@ router.post(
       media: { images, videos },
     });
 
-    for (const video of videos) {
-      queuePostVideoProcessing({
-        postId: post.id,
-        videoId: video.id,
-        fileName: video.original,
-      });
+    if (!remoteMediaEnabled) {
+      for (const video of videos) {
+        queuePostVideoProcessing({
+          postId: post.id,
+          videoId: video.id,
+          fileName: video.original,
+        });
+      }
     }
 
     await enforceMaxPosts(governorateId);
@@ -280,8 +356,6 @@ router.put(
         return res.status(400).json({ error: "Video to remove does not exist" });
       }
 
-      const newImages = [];
-      const newVideos = [];
       const uploadResult = await ensureAllUploadedFilesSaved(req);
       const savedFiles = uploadResult.files;
 
@@ -292,15 +366,25 @@ router.put(
         });
       }
 
-      for (const f of savedFiles) {
-        const main = (f.mimetype || "").split("/")[0];
-        if (main === "image") newImages.push(f.filename);
-        else if (main === "video") {
-          newVideos.push(createPostVideoEntry(f.filename));
-        } else {
-          return res.status(400).json({ error: "Only images and videos are allowed" });
-        }
-      }
+      const remoteMediaEnabled = isRemoteMediaEnabled();
+      const { images: newImages, videos: newVideos } = remoteMediaEnabled
+        ? await uploadSavedFilesToRemoteMedia(savedFiles)
+        : (() => {
+            const localImages = [];
+            const localVideos = [];
+
+            for (const f of savedFiles) {
+              const main = (f.mimetype || "").split("/")[0];
+              if (main === "image") localImages.push(f.filename);
+              else if (main === "video") {
+                localVideos.push(createPostVideoEntry(f.filename));
+              } else {
+                throw new Error("Only images and videos are allowed");
+              }
+            }
+
+            return { images: localImages, videos: localVideos };
+          })();
 
       post.media = {
         images: currentImages.filter((name) => !removeImages.includes(name)).concat(newImages),
@@ -331,12 +415,14 @@ router.put(
         }
       }
 
-      for (const video of newVideos) {
-        queuePostVideoProcessing({
-          postId: post.id,
-          videoId: video.id,
-          fileName: video.original,
-        });
+      if (!remoteMediaEnabled) {
+        for (const video of newVideos) {
+          queuePostVideoProcessing({
+            postId: post.id,
+            videoId: video.id,
+            fileName: video.original,
+          });
+        }
       }
 
       return res.status(200).json(post);
