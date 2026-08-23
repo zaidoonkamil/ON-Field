@@ -15,6 +15,8 @@ const PlayerMatchStats = sequelize.define("PlayerMatchStats", {
   redCards: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
 
   isMotm: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  // One optional position award per player for this specific match.
+  individualAward: { type: DataTypes.STRING(24), allowNull: true, defaultValue: null },
 }, { timestamps: true });
 
 module.exports = PlayerMatchStats;

@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { Op } = require("sequelize");
-const { User, PlayerMatchStats, Game } = require("../models");
+const { User, PlayerMatchStats, Game, PlayerOfMonth } = require("../models");
 const { fn, col, where } = require("sequelize");
 const { optionalAuthenticateToken } = require("../middlewares/auth");
 const {
@@ -34,6 +34,70 @@ const safeImage = (img) => {
 };
 
 const safePosition = (p) => safeString(p, ""); 
+
+const baghdadMonthKey = () => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Baghdad",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  return `${year}-${month}`;
+};
+
+const getMonthRange = (value) => {
+  const monthKey = safeString(value, baghdadMonthKey());
+  const match = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+
+  const start = `${match[1]}-${match[2]}-01 00:00:00`;
+  const next = new Date(Date.UTC(year, month, 1));
+  const end = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-01 00:00:00`;
+  return { monthKey, start, end };
+};
+
+const addPlayerOfMonthAwards = async (players, governorateScope) => {
+  const userIds = players.map((player) => player.id).filter(Boolean);
+  if (!userIds.length) return players;
+
+  const where = { userId: { [Op.in]: userIds } };
+  if (governorateScope !== null && governorateScope !== undefined) {
+    where.governorateId = governorateScope;
+  }
+
+  const awards = await PlayerOfMonth.findAll({
+    where,
+    attributes: ["userId", "month", "note"],
+    order: [["month", "DESC"], ["id", "DESC"]],
+  });
+  const byUserId = new Map();
+
+  for (const award of awards) {
+    const list = byUserId.get(award.userId) || [];
+    list.push({ month: award.month, note: award.note || null });
+    byUserId.set(award.userId, list);
+  }
+
+  return players.map((player) => ({
+    ...player,
+    playerOfMonthAwards: byUserId.get(player.id) || [],
+  }));
+};
+
+const mapIndividualAwards = (statsRows) =>
+  statsRows
+    .filter((row) => row.individualAward)
+    .map((row) => ({
+      type: row.individualAward,
+      stadiumName: row.game?.stadiumName || "",
+      startsAt: row.game?.startsAt || null,
+    }))
+    .sort((a, b) => String(b.startsAt || "").localeCompare(String(a.startsAt || "")));
 
 
 router.get("/players/stats", optionalAuthenticateToken, async (req, res) => {
@@ -88,15 +152,13 @@ router.get("/players/stats", optionalAuthenticateToken, async (req, res) => {
       if (to) gameWhere.date[Op.lte] = new Date(to);
     }
 
-    const includeGame = (status || from || to)
-      ? [{
+    const includeGame = [{
           model: Game,
           as: "game",
-          where: gameWhere,
-          required: true,
-          attributes: ["id", "status", "date"],
-        }]
-      : [];
+          where: status || from || to ? gameWhere : undefined,
+          required: Boolean(status || from || to),
+          attributes: ["id", "status", "date", "startsAt", "stadiumName"],
+        }];
 
     const rows = await User.findAll({
       where: userWhere,
@@ -106,14 +168,14 @@ router.get("/players/stats", optionalAuthenticateToken, async (req, res) => {
           model: PlayerMatchStats,
           as: "stats",
           required: false,
-          attributes: ["gameId", "team", "goals", "assists", "yellowCards", "redCards", "isMotm"],
+          attributes: ["gameId", "team", "goals", "assists", "yellowCards", "redCards", "isMotm", "individualAward"],
           include: includeGame,
         },
       ],
       distinct: true,
     });
 
-    const allPlayers = rows.map((u) => {
+    let allPlayers = rows.map((u) => {
       const user = u.toJSON();
       const statsRows = Array.isArray(user.stats) ? user.stats : [];
 
@@ -139,8 +201,11 @@ router.get("/players/stats", optionalAuthenticateToken, async (req, res) => {
         overall: Number.isFinite(calcOverall(user)) ? calcOverall(user) : 0,
         image: safeImage(user.image),
         stats: totals,
+        individualAwards: mapIndividualAwards(statsRows),
       };
     });
+
+    allPlayers = await addPlayerOfMonthAwards(allPlayers, governorateScope);
 
     allPlayers.sort((a, b) => 
       a.name.localeCompare(b.name, 'ar', { sensitivity: 'base' })
@@ -169,6 +234,13 @@ router.get("/players/leaderboard", optionalAuthenticateToken, async (req, res) =
     const by = safeString(req.query.by, "goals").toLowerCase();
     const team = safeString(req.query.team, "");
     const min = Number(req.query.min ?? 1);
+    const period = safeString(req.query.period, "").toLowerCase();
+    const isMonthly = period === "month" || safeString(req.query.month, "").length > 0;
+    const monthRange = isMonthly ? getMonthRange(req.query.month) : null;
+
+    if (isMonthly && !monthRange) {
+      return res.status(400).json({ error: "month must use YYYY-MM" });
+    }
 
     const status = req.query.status;
     const from = req.query.from;
@@ -216,6 +288,17 @@ router.get("/players/leaderboard", optionalAuthenticateToken, async (req, res) =
     const statsWhere = {};
     if (team) statsWhere.team = team;
 
+    // This path is opt-in. Existing app versions keep their all-time totals.
+    const monthlyGameWhere = isMonthly
+      ? {
+          startsAt: {
+            [Op.gte]: monthRange.start,
+            [Op.lt]: monthRange.end,
+          },
+        }
+      : null;
+    if (isMonthly && status) monthlyGameWhere.status = status;
+
     const rows = await User.findAll({
       where: userWhere,
       attributes: { exclude: ["password"] },
@@ -225,8 +308,16 @@ router.get("/players/leaderboard", optionalAuthenticateToken, async (req, res) =
           as: "stats",
           required: false,
           where: Object.keys(statsWhere).length ? statsWhere : undefined,
-          attributes: ["goals", "assists", "yellowCards", "redCards", "isMotm"],
-          include: (status || from || to)
+          attributes: ["goals", "assists", "yellowCards", "redCards", "isMotm", "individualAward"],
+          include: isMonthly
+            ? [{
+                model: Game,
+                as: "game",
+                where: monthlyGameWhere,
+                required: true,
+                attributes: ["id", "status", "startsAt", "stadiumName"],
+              }]
+            : (status || from || to)
             ? [{
                 model: Game,
                 as: "game",
@@ -234,13 +325,18 @@ router.get("/players/leaderboard", optionalAuthenticateToken, async (req, res) =
                 required: false,
                 attributes: ["id", "status", "date"],
               }]
-            : [],
+            : [{
+                model: Game,
+                as: "game",
+                required: false,
+                attributes: ["id", "status", "startsAt", "stadiumName"],
+              }],
         },
       ],
       distinct: true,
     });
 
-    const players = rows
+    let players = rows
       .map((u) => {
         const user = u.toJSON();
         const statsRows = Array.isArray(user.stats) ? user.stats : [];
@@ -282,12 +378,15 @@ router.get("/players/leaderboard", optionalAuthenticateToken, async (req, res) =
           overall: Number.isFinite(calcOverall(user)) ? calcOverall(user) : 0,
           image: safeImage(user.image),
           stats: totals,
+          individualAwards: mapIndividualAwards(statsRows),
           cards,
           metric,
         };
       })
       .filter((p) => (Number.isFinite(min) ? p.metric >= min : p.metric > 0))
       .sort((a, b) => b.metric - a.metric);
+
+    players = await addPlayerOfMonthAwards(players, governorateScope);
 
     const totalUsers = players.length;
     const totalPages = Math.ceil(totalUsers / limit);
@@ -297,6 +396,8 @@ router.get("/players/leaderboard", optionalAuthenticateToken, async (req, res) =
     return res.json({
       by,
       team: team || null,
+      period: isMonthly ? "month" : "all",
+      month: isMonthly ? monthRange.monthKey : null,
       players: paged,
       pagination: { totalUsers, currentPage: page, totalPages, limit },
     });

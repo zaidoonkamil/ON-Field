@@ -9,6 +9,7 @@ const {
   PlayerMatchStats,
   Game,
   Governorate,
+  PlayerOfMonth,
 } = require("../models");
 const uploadImage = require("../middlewares/uploads");
 const { optionalAuthenticateToken } = require("../middlewares/auth");
@@ -103,6 +104,34 @@ const normalizeStatsPayload = (stats) => {
     losses: 0,
   };
 };
+
+const getPlayerOfMonthAwards = async (userId, governorateId) => {
+  const where = { userId };
+  if (governorateId !== null && governorateId !== undefined) {
+    where.governorateId = governorateId;
+  }
+
+  const awards = await PlayerOfMonth.findAll({
+    where,
+    attributes: ["month", "note"],
+    order: [["month", "DESC"], ["id", "DESC"]],
+  });
+
+  return awards.map((award) => ({
+    month: award.month,
+    note: award.note || null,
+  }));
+};
+
+const mapIndividualAwards = (statsRows) =>
+  statsRows
+    .filter((row) => row.individualAward)
+    .map((row) => ({
+      type: row.individualAward,
+      stadiumName: row.game?.stadiumName || "",
+      startsAt: row.game?.startsAt || null,
+    }))
+    .sort((a, b) => String(b.startsAt || "").localeCompare(String(a.startsAt || "")));
 
 async function resolveGovernorate({ governorateId, governorate }) {
   if (governorateId) {
@@ -410,6 +439,11 @@ router.get("/user/:id", optionalAuthenticateToken, async (req, res) => {
       (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
     );
 
+    const playerOfMonthAwards = await getPlayerOfMonthAwards(
+      user.id,
+      user.governorateId
+    );
+
     return res.status(200).json({
       ...user.toJSON(),
       governorate: mapGovernorate(user.governorate),
@@ -417,6 +451,7 @@ router.get("/user/:id", optionalAuthenticateToken, async (req, res) => {
       position: user.position || "",
       overall,
       stats: normalizeStatsPayload(),
+      playerOfMonthAwards,
     });
   } catch (err) {
     console.error("Error fetching user:", err);
@@ -450,7 +485,14 @@ router.get("/user-stats/:id", optionalAuthenticateToken, async (req, res) => {
             "yellowCards",
             "redCards",
             "isMotm",
+            "individualAward",
           ],
+          include: [{
+            model: Game,
+            as: "game",
+            required: false,
+            attributes: ["id", "stadiumName", "startsAt"],
+          }],
         },
       ],
       distinct: true,
@@ -499,6 +541,11 @@ router.get("/user-stats/:id", optionalAuthenticateToken, async (req, res) => {
         6
     );
 
+    const playerOfMonthAwards = await getPlayerOfMonthAwards(
+      userJson.id,
+      userJson.governorateId
+    );
+
     return res.status(200).json({
       id: userJson.id,
       name: userJson.name,
@@ -513,6 +560,8 @@ router.get("/user-stats/:id", optionalAuthenticateToken, async (req, res) => {
         ...totals,
         totalCards: totals.yellowCards + totals.redCards,
       },
+      playerOfMonthAwards,
+      individualAwards: mapIndividualAwards(statsRows),
     });
   } catch (err) {
     console.error("Error fetching user stats:", err);
@@ -549,7 +598,7 @@ router.get("/profile", async (req, res) => {
                 as: "game",
                 where: gameWhere,
                 required: true,
-                attributes: ["id", "status", "startsAt"],
+                attributes: ["id", "status", "startsAt", "stadiumName"],
               },
             ]
           : [];
@@ -573,8 +622,16 @@ router.get("/profile", async (req, res) => {
               "yellowCards",
               "redCards",
               "isMotm",
+              "individualAward",
             ],
-            include: includeGame,
+            include: includeGame.length
+              ? includeGame
+              : [{
+                  model: Game,
+                  as: "game",
+                  required: false,
+                  attributes: ["id", "stadiumName", "startsAt"],
+                }],
           },
         ],
         distinct: true,
@@ -607,6 +664,11 @@ router.get("/profile", async (req, res) => {
 
       const overall = Math.round(
         (user.spd + user.fin + user.pas + user.skl + user.tkl + user.str) / 6
+      );
+
+      const playerOfMonthAwards = await getPlayerOfMonthAwards(
+        user.id,
+        user.governorateId
       );
 
       const gameIds = [...new Set(statsRows.map((r) => r.gameId).filter(Boolean))];
@@ -655,6 +717,8 @@ router.get("/profile", async (req, res) => {
           ...totals,
           ...wdl,
         }),
+        playerOfMonthAwards,
+        individualAwards: mapIndividualAwards(statsRows),
       });
     } catch (error) {
       console.error("Error fetching user profile:", error);

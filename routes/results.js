@@ -21,6 +21,17 @@ const {
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
+const INDIVIDUAL_AWARDS = new Set([
+  "goalkeeper",
+  "defender",
+  "midfielder",
+  "forward",
+]);
+
+const normalizeIndividualAward = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  return typeof value === "string" ? value.trim().toLowerCase() : "__invalid__";
+};
 
 async function getRawGameStartsAt(gameId) {
   const numericId = Number(gameId);
@@ -130,6 +141,7 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
     const validTeams = new Set(["A", "B"]);
 
     if (Array.isArray(playersStats)) {
+      const assignedAwards = new Set();
       for (let i = 0; i < playersStats.length; i += 1) {
         const p = playersStats[i];
 
@@ -151,6 +163,16 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
           if (p[f] !== undefined && !isNonNegInt(p[f])) {
             errors.push(`playersStats[${i}].${f} must be an integer >= 0`);
           }
+        }
+
+        const individualAward = normalizeIndividualAward(p.individualAward);
+        if (individualAward === "__invalid__" || (individualAward && !INDIVIDUAL_AWARDS.has(individualAward))) {
+          errors.push(`playersStats[${i}].individualAward is invalid`);
+        } else if (individualAward) {
+          if (assignedAwards.has(individualAward)) {
+            errors.push(`individualAward ${individualAward} can only be assigned once per game`);
+          }
+          assignedAwards.add(individualAward);
         }
       }
     }
@@ -203,6 +225,7 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
           yellowCards: p.yellowCards ?? 0,
           redCards: p.redCards ?? 0,
           isMotm: motmUserId ? Number(p.userId) === Number(motmUserId) : false,
+          individualAward: normalizeIndividualAward(p.individualAward),
         });
       }
     }
@@ -224,6 +247,90 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+router.patch(
+  "/games/:id/player-stats/:userId",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
+        return res.status(403).json({ error: "Not allowed" });
+      }
+
+      const gameId = Number(req.params.id);
+      const userId = Number(req.params.userId);
+      if (!Number.isInteger(gameId) || gameId <= 0 || !Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ error: "Invalid gameId or userId" });
+      }
+
+      const game = await Game.findByPk(gameId);
+      if (!game) return res.status(404).json({ error: "Game not found" });
+      if (!ensureGovernorateAccess(req, res, game.governorateId)) return;
+
+      const stat = await PlayerMatchStats.findOne({ where: { gameId, userId } });
+      if (!stat) {
+        return res.status(404).json({ error: "Player match record not found" });
+      }
+
+      const payload = req.body && typeof req.body === "object" ? req.body : {};
+      const updates = {};
+      for (const field of ["goals", "assists", "yellowCards", "redCards"]) {
+        if (payload[field] === undefined) continue;
+        const value = Number(payload[field]);
+        if (!Number.isInteger(value) || value < 0) {
+          return res.status(400).json({ error: `${field} must be an integer >= 0` });
+        }
+        updates[field] = value;
+      }
+
+      if (payload.isMotm !== undefined) {
+        if (typeof payload.isMotm !== "boolean") {
+          return res.status(400).json({ error: "isMotm must be a boolean" });
+        }
+        updates.isMotm = payload.isMotm;
+      }
+
+      if (payload.individualAward !== undefined) {
+        const individualAward = normalizeIndividualAward(payload.individualAward);
+        if (individualAward === "__invalid__" || (individualAward && !INDIVIDUAL_AWARDS.has(individualAward))) {
+          return res.status(400).json({ error: "individualAward is invalid" });
+        }
+        updates.individualAward = individualAward;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "No player stats supplied" });
+      }
+
+      await Game.sequelize.transaction(async (transaction) => {
+        if (updates.isMotm === true) {
+          await PlayerMatchStats.update(
+            { isMotm: false },
+            { where: { gameId }, transaction }
+          );
+        }
+        if (updates.individualAward) {
+          await PlayerMatchStats.update(
+            { individualAward: null },
+            {
+              where: { gameId, individualAward: updates.individualAward },
+              transaction,
+            }
+          );
+        }
+        await stat.update(updates, { transaction });
+      });
+
+      return res.json({
+        message: "Player match stats updated successfully",
+        playerStat: stat,
+      });
+    } catch (e) {
+      console.error("Update player match stats error:", e);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+);
 
 router.get("/games/:id/results", optionalAuthenticateToken, async (req, res) => {
   try {

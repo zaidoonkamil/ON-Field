@@ -8,6 +8,7 @@ const {
   LiveStream,
   MonthlySquad,
   PlayerOfMonth,
+  PlayerMatchStats,
 } = require("../models");
 const { BAGHDAD_NAME } = require("./governorates");
 
@@ -224,6 +225,16 @@ async function ensureCoreSchema() {
         type: DataTypes.STRING,
         allowNull: true,
       });
+      await ensureColumn(
+        queryInterface,
+        PlayerMatchStats.getTableName(),
+        "individualAward",
+        {
+          type: DataTypes.STRING(24),
+          allowNull: true,
+          defaultValue: null,
+        }
+      );
 
       const [baghdad] = await Governorate.findOrCreate({
         where: { name: BAGHDAD_NAME },
