@@ -11,6 +11,7 @@ const MonthlySquad = require("./MonthlySquad");
 const MonthlySquadSlot = require("./MonthlySquadSlot");
 const Message = require("./Message");
 const PlayerOfMonth = require("./PlayerOfMonth");
+const BookingAd = require("./BookingAd");
 
 Governorate.hasMany(User, {
   foreignKey: "governorateId",
@@ -72,6 +73,16 @@ PlayerOfMonth.belongsTo(Governorate, {
   as: "governorate",
 });
 
+Governorate.hasMany(BookingAd, {
+  foreignKey: "governorateId",
+  as: "bookingAds",
+  onDelete: "SET NULL",
+});
+BookingAd.belongsTo(Governorate, {
+  foreignKey: "governorateId",
+  as: "governorate",
+});
+
 Game.hasMany(GameSlot, { foreignKey: "gameId", as: "slots", onDelete: "CASCADE", hooks: true });
 GameSlot.belongsTo(Game, { foreignKey: "gameId", as: "game" });
 
@@ -120,4 +131,5 @@ module.exports = {
   MonthlySquadSlot,
   Message,
   PlayerOfMonth,
+  BookingAd,
 };

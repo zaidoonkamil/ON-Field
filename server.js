@@ -24,6 +24,7 @@ const { setupSocketHandlers } = require("./services/socketService.js");
 const { startWhatsAppAutoInit } = require("./services/waSender.js");
 const { startPostVideoMigration } = require("./services/migratePostVideos.js");
 const playerOfMonthRoutes = require("./routes/playerOfMonth");
+const bookingAdsRouter = require("./routes/booking_ads");
 
 const app = express();
 const server = http.createServer(app);
@@ -67,6 +68,7 @@ app.use("/", chatRouter);
 app.use("/", whatsappRouter);
 app.use("/", superAdminRouter);
 app.use("/", playerOfMonthRoutes);
+app.use("/", bookingAdsRouter);
 
 server.requestTimeout = uploadRequestTimeoutMs;
 server.headersTimeout = Math.max(

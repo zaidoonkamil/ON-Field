@@ -9,6 +9,7 @@ const {
   MonthlySquad,
   PlayerOfMonth,
   PlayerMatchStats,
+  BookingAd,
 } = require("../models");
 const { BAGHDAD_NAME } = require("./governorates");
 
@@ -221,7 +222,14 @@ async function ensureCoreSchema() {
         { where: { chatLastReadAt: null } }
       );
 
-      const scopedModels = [Game, Post, LiveStream, MonthlySquad, PlayerOfMonth];
+      const scopedModels = [
+        Game,
+        Post,
+        LiveStream,
+        MonthlySquad,
+        PlayerOfMonth,
+        BookingAd,
+      ];
       for (const model of scopedModels) {
         await model.sync();
         await ensureColumn(queryInterface, model.getTableName(), "governorateId", {
