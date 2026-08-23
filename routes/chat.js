@@ -55,7 +55,7 @@ router.get("/api/chat/unread-count", authenticateToken, async (req, res) => {
       where: {
         room,
         userId: { [Op.ne]: user.id },
-        createdAt: { [Op.gt]: user.chatLastReadAt },
+        createdAt: { [Op.gt]: user.chatLastReadAt || new Date() },
       },
     });
 

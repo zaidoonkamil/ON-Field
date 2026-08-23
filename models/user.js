@@ -45,7 +45,8 @@ const User = sequelize.define("User", {
     },
     chatLastReadAt: {
         type: DataTypes.DATE,
-        allowNull: false,
+        // Nullable only for the one-time legacy migration. New users receive NOW.
+        allowNull: true,
         defaultValue: DataTypes.NOW,
     },
     position: {
