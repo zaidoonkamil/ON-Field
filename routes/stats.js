@@ -147,9 +147,9 @@ router.get("/players/stats", optionalAuthenticateToken, async (req, res) => {
     const gameWhere = {};
     if (status) gameWhere.status = status;
     if (from || to) {
-      gameWhere.date = {};
-      if (from) gameWhere.date[Op.gte] = new Date(from);
-      if (to) gameWhere.date[Op.lte] = new Date(to);
+      gameWhere.startsAt = {};
+      if (from) gameWhere.startsAt[Op.gte] = new Date(from);
+      if (to) gameWhere.startsAt[Op.lte] = new Date(to);
     }
 
     const includeGame = [{
@@ -157,7 +157,7 @@ router.get("/players/stats", optionalAuthenticateToken, async (req, res) => {
           as: "game",
           where: status || from || to ? gameWhere : undefined,
           required: Boolean(status || from || to),
-          attributes: ["id", "status", "date", "startsAt", "stadiumName"],
+          attributes: ["id", "status", "startsAt", "stadiumName"],
         }];
 
     const rows = await User.findAll({
@@ -280,9 +280,9 @@ router.get("/players/leaderboard", optionalAuthenticateToken, async (req, res) =
     const gameWhere = {};
     if (status) gameWhere.status = status;
     if (from || to) {
-      gameWhere.date = {};
-      if (from) gameWhere.date[Op.gte] = `${from} 00:00:00`;
-      if (to) gameWhere.date[Op.lte] = `${to} 23:59:59`;
+      gameWhere.startsAt = {};
+      if (from) gameWhere.startsAt[Op.gte] = `${from} 00:00:00`;
+      if (to) gameWhere.startsAt[Op.lte] = `${to} 23:59:59`;
     }
 
     const statsWhere = {};
@@ -323,7 +323,7 @@ router.get("/players/leaderboard", optionalAuthenticateToken, async (req, res) =
                 as: "game",
                 where: gameWhere,
                 required: false,
-                attributes: ["id", "status", "date"],
+                attributes: ["id", "status", "startsAt", "stadiumName"],
               }]
             : [{
                 model: Game,
