@@ -211,6 +211,11 @@ async function ensureCoreSchema() {
         type: DataTypes.INTEGER,
         allowNull: true,
       });
+      await ensureColumn(queryInterface, usersTable, "chatLastReadAt", {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW,
+      });
 
       const scopedModels = [Game, Post, LiveStream, MonthlySquad, PlayerOfMonth];
       for (const model of scopedModels) {

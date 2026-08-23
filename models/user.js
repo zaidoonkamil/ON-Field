@@ -43,6 +43,11 @@ const User = sequelize.define("User", {
         type: DataTypes.INTEGER,
         allowNull: true,
     },
+    chatLastReadAt: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW,
+    },
     position: {
         type: DataTypes.ENUM(
             "GK",

@@ -3,7 +3,9 @@ const router = express.Router();
 const chatService = require("../services/chatService");
 const upload = require("../middlewares/uploads");
 const { connectedUsers } = require("../services/socketService");
-const { User } = require("../models");
+const { Op } = require("sequelize");
+const { User, Message } = require("../models");
+const { authenticateToken } = require("../middlewares/auth");
 
 async function ensureAdminPermission(userId) {
   const user = await User.findByPk(Number(userId), {
@@ -20,6 +22,69 @@ async function ensureAdminPermission(userId) {
 
   return user;
 }
+
+async function resolveAuthenticatedChatUser(req, userId, requestedRoom) {
+  const numericUserId = Number(userId);
+  if (!Number.isInteger(numericUserId) || numericUserId <= 0) {
+    throw { status: 400, message: "Invalid userId" };
+  }
+  if (Number(req.user?.id) !== numericUserId) {
+    throw { status: 403, message: "Not allowed" };
+  }
+
+  const user = await User.findByPk(numericUserId, {
+    attributes: ["id", "chatLastReadAt"],
+  });
+  if (!user) throw { status: 404, message: "User not found" };
+
+  const room = await chatService.resolveRoomForUser(
+    numericUserId,
+    requestedRoom || chatService.getDefaultRoom()
+  );
+  return { user, room };
+}
+
+router.get("/api/chat/unread-count", authenticateToken, async (req, res) => {
+  try {
+    const { user, room } = await resolveAuthenticatedChatUser(
+      req,
+      req.query.userId,
+      req.query.room
+    );
+    const unreadCount = await Message.count({
+      where: {
+        room,
+        userId: { [Op.ne]: user.id },
+        createdAt: { [Op.gt]: user.chatLastReadAt },
+      },
+    });
+
+    return res.json({ success: true, unreadCount });
+  } catch (error) {
+    return res.status(error?.status || 500).json({
+      success: false,
+      message: error?.message || "Unable to load unread count",
+    });
+  }
+});
+
+router.post("/api/chat/read", authenticateToken, async (req, res) => {
+  try {
+    const { user, room } = await resolveAuthenticatedChatUser(
+      req,
+      req.body?.userId || req.user?.id,
+      req.body?.room
+    );
+    await user.update({ chatLastReadAt: new Date() });
+
+    return res.json({ success: true, room });
+  } catch (error) {
+    return res.status(error?.status || 500).json({
+      success: false,
+      message: error?.message || "Unable to mark chat as read",
+    });
+  }
+});
 
 router.post("/api/chat/upload", upload.single("file"), async (req, res) => {
   try {

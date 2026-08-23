@@ -31,7 +31,12 @@ const ensureUserDeviceSchema = async () => {
   return userDeviceSchemaPromise;
 };
 
-const sendNotificationToDevices = async (playerIds, message, title = "Notification") => {
+const sendNotificationToDevices = async (
+  playerIds,
+  message,
+  title = "Notification",
+  additionalData = null
+) => {
   const url = 'https://onesignal.com/api/v1/notifications';
   const headers = {
     'Authorization': `Basic ${process.env.ONESIGNAL_API_KEY}`,
@@ -42,6 +47,7 @@ const sendNotificationToDevices = async (playerIds, message, title = "Notificati
     include_player_ids: playerIds,
     contents: { en: message },
     headings: { en: title },
+    ...(additionalData ? { data: additionalData } : {}),
   };
 
   return axios.post(url, data, { headers });
@@ -123,7 +129,12 @@ const sendNotificationToRole = async (role, message, title = "Notification") => 
   }
 };
 
-const sendNotificationToUser = async (userId, message, title = "Notification") => {
+const sendNotificationToUser = async (
+  userId,
+  message,
+  title = "Notification",
+  additionalData = null
+) => {
   await ensureUserDeviceSchema();
   const devices = await UserDevice.findAll({
     where: { user_id: userId }
@@ -138,6 +149,11 @@ const sendNotificationToUser = async (userId, message, title = "Notification") =
   }
 
   const playerIds = [...new Set(devices.map(d => d.player_id).filter(Boolean))];
+  const resolvedAdditionalData =
+    additionalData ??
+    (title.includes("\u0627\u0644\u062f\u0631\u062f\u0634\u0629")
+      ? { screen: "chat" }
+      : null);
 
   const logData = {
     title,
@@ -154,7 +170,12 @@ const sendNotificationToUser = async (userId, message, title = "Notification") =
   }
 
   try {
-    await sendNotificationToDevices(playerIds, message, title);
+    await sendNotificationToDevices(
+      playerIds,
+      message,
+      title,
+      resolvedAdditionalData
+    );
     logData.status = "sent";
     await NotificationLog.create(logData);
     return { success: true };
@@ -243,7 +264,9 @@ const sendChatNotificationToAllExcept = async ({
     }
 
     try {
-      await sendNotificationToDevices(playerIds, message, title);
+      await sendNotificationToDevices(playerIds, message, title, {
+        screen: "chat",
+      });
       logData.status = "sent";
       await NotificationLog.create(logData);
     } catch (err) {
