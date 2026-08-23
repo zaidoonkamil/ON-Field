@@ -1,5 +1,5 @@
 const chatService = require("./chatService");
-const { User } = require("../models");
+const { User, Message } = require("../models");
 
 // تخزين المستخدمين المتصلين
 const connectedUsers = {};
@@ -23,6 +23,33 @@ const ensureAdminPermission = async (userId) => {
   }
 
   return user;
+};
+
+const ensureCanDeleteMessage = async ({ messageId, userId }) => {
+  const [requester, message] = await Promise.all([
+    User.findByPk(Number(userId), {
+      attributes: ["id", "role", "governorateId"],
+    }),
+    Message.findByPk(Number(messageId), {
+      attributes: ["id", "userId"],
+    }),
+  ]);
+
+  if (!requester) throw new Error("User not found");
+  if (!message) throw new Error("Message not found");
+  if (Number(message.userId) === Number(requester.id)) return;
+  if (requester.role === "super_admin") return;
+
+  if (requester.role !== "admin") {
+    throw new Error("You can only delete your own messages");
+  }
+
+  const author = await User.findByPk(Number(message.userId), {
+    attributes: ["governorateId"],
+  });
+  if (!author || Number(author.governorateId) !== Number(requester.governorateId)) {
+    throw new Error("You cannot delete messages outside your governorate");
+  }
 };
 
 /**
@@ -151,6 +178,8 @@ const setupSocketHandlers = (io) => {
     socket.on("delete_message", async (data = {}) => {
       try {
         const { messageId } = data;
+        const userId = data.userId || connectedUsers[socket.id]?.userId;
+        await ensureCanDeleteMessage({ messageId, userId });
         const deletedMessage = await chatService.deleteMessage(messageId);
 
         if (deletedMessage) {
@@ -159,6 +188,9 @@ const setupSocketHandlers = (io) => {
         }
       } catch (error) {
         console.error("خطأ في حذف الرسالة:", error);
+        socket.emit("error", {
+          message: error.message || "تعذر حذف الرسالة",
+        });
       }
     });
 
