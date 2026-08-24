@@ -48,6 +48,22 @@ function buildFormation(size) {
       { code: "COACH", label: "Ù…Ø¯Ø±Ø¨", role: "coach" },
     ];
   }
+  if (String(size) === "9") {
+    return [
+      { code: "GK", label: "GK حارس", role: "player" },
+      { code: "LB", label: "LB مدافع أيسر", role: "player" },
+      { code: "CB1", label: "CB مدافع 1", role: "player" },
+      { code: "CB2", label: "CB مدافع 2", role: "player" },
+      { code: "RB", label: "RB مدافع أيمن", role: "player" },
+      { code: "CM1", label: "CM وسط 1", role: "player" },
+      { code: "CM2", label: "CM وسط 2", role: "player" },
+      { code: "LWF", label: "LWF مهاجم أيسر", role: "player" },
+      { code: "CF", label: "CF رأس حربة", role: "player" },
+      { code: "BENCH1", label: "احتياط 1", role: "bench" },
+      { code: "BENCH2", label: "احتياط 2", role: "bench" },
+      { code: "COACH", label: "مدرب", role: "coach" },
+    ];
+  }
   return [
     { code: "GK", label: "GK Ø­Ø§Ø±Ø³", role: "player" },
     { code: "LB", label: "LB Ù…Ø¯Ø§ÙØ¹ Ø£ÙŠØ³Ø±", role: "player" },
@@ -277,6 +293,11 @@ router.post("/monthly-squads", upload.none(), authenticateToken, async (req, res
     if (!title || !formationSize) {
       await t.rollback();
       return res.status(400).json({ error: "title and formationSize are required" });
+    }
+
+    if (!["5", "7", "9", "11"].includes(String(formationSize))) {
+      await t.rollback();
+      return res.status(400).json({ error: "formationSize must be 5, 7, 9, or 11" });
     }
 
     const governorateId = await resolveRequestGovernorateId(req);

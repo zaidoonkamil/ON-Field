@@ -10,7 +10,7 @@ const MonthlySquad = sequelize.define("MonthlySquad", {
   },
 
   formationSize: {
-    type: DataTypes.ENUM("5", "7", "11"),
+    type: DataTypes.ENUM("5", "7", "9", "11"),
     allowNull: false,
   },
 

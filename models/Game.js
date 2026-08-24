@@ -27,7 +27,7 @@ const Game = sequelize.define("Game", {
     },
   }, 
   formationSize: {
-    type: DataTypes.ENUM("5", "7", "11"),
+    type: DataTypes.ENUM("5", "7", "9", "11"),
     allowNull: false,
   },
   status: {

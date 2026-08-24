@@ -46,6 +46,19 @@ async function ensureUserRoleEnum(queryInterface, tableName) {
   }
 }
 
+async function ensureFormationSizeEnum(queryInterface, model) {
+  const tableName = model.getTableName();
+  const table = await queryInterface.describeTable(tableName);
+  const typeText = String(table.formationSize?.type || "").toLowerCase();
+
+  if (typeText.includes("'9'")) return;
+
+  await queryInterface.changeColumn(tableName, "formationSize", {
+    type: DataTypes.ENUM("5", "7", "9", "11"),
+    allowNull: false,
+  });
+}
+
 async function backfillGovernorateId(model, baghdadId) {
   const tableName = model.getTableName();
   const queryInterface = sequelize.getQueryInterface();
@@ -242,6 +255,8 @@ async function ensureCoreSchema() {
         type: DataTypes.STRING,
         allowNull: true,
       });
+      await ensureFormationSizeEnum(queryInterface, Game);
+      await ensureFormationSizeEnum(queryInterface, MonthlySquad);
       await ensureColumn(
         queryInterface,
         PlayerMatchStats.getTableName(),
