@@ -15,6 +15,13 @@ const Post = sequelize.define("Post", {
 
   text: { type: DataTypes.TEXT, allowNull: true },
 
+  // Old posts and clients belong to the 11-a-side section by default.
+  formationSize: {
+    type: DataTypes.STRING(2),
+    allowNull: false,
+    defaultValue: "11",
+  },
+
   media: {
     type: DataTypes.JSON,
     allowNull: false,

@@ -365,7 +365,8 @@ router.get("/players/leaderboard", optionalAuthenticateToken, async (req, res) =
         const cards = totals.yellowCards + totals.redCards;
 
         let metric = 0;
-        if (by === "assists") metric = totals.assists;
+        if (by === "overall") metric = calcOverall(user);
+        else if (by === "assists") metric = totals.assists;
         else if (by === "cards") metric = cards;
         else metric = totals.goals;
 

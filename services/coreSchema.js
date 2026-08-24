@@ -255,6 +255,11 @@ async function ensureCoreSchema() {
         type: DataTypes.STRING,
         allowNull: true,
       });
+      await ensureColumn(queryInterface, Post.getTableName(), "formationSize", {
+        type: DataTypes.STRING(2),
+        allowNull: false,
+        defaultValue: "11",
+      });
       await ensureFormationSizeEnum(queryInterface, Game);
       await ensureFormationSizeEnum(queryInterface, MonthlySquad);
       await ensureColumn(

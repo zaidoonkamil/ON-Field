@@ -216,7 +216,10 @@ router.post(
   uploadPostMedia.array("media", 600),
   async (req, res) => {
   try {
-    const { text } = req.body;
+    const { text, formationSize = "11" } = req.body;
+    if (!["5", "7", "9", "11"].includes(String(formationSize))) {
+      return res.status(400).json({ error: "formationSize يجب أن يكون 5 أو 7 أو 9 أو 11" });
+    }
     const uploadResult = await ensureAllUploadedFilesSaved(req);
     const savedFiles = uploadResult.files;
 
@@ -255,6 +258,7 @@ router.post(
       userId: Number(req.user.id),
       governorateId,
       text: text || null,
+      formationSize: String(formationSize),
       media: { images, videos },
     });
 
@@ -281,14 +285,18 @@ router.get("/posts", optionalAuthenticateToken, async (req, res) => {
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 30;
     const offset = (page - 1) * limit;
+    const formationSize = String(req.query.formationSize || "11");
     const governorateScope = getGovernorateScope(req, { allowQuery: true });
 
     if (governorateScope === undefined) {
       return res.status(400).json({ error: "governorateId is required" });
     }
+    if (!["5", "7", "9", "11"].includes(formationSize)) {
+      return res.status(400).json({ error: "formationSize يجب أن يكون 5 أو 7 أو 9 أو 11" });
+    }
 
     const posts = await Post.findAll({
-      where: applyGovernorateScope({}, governorateScope),
+      where: applyGovernorateScope({ formationSize }, governorateScope),
       order: [["createdAt", "DESC"]],
       limit,
       offset,
@@ -327,7 +335,7 @@ router.put(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const { text } = req.body;
+      const { text, formationSize } = req.body;
 
       const post = await Post.findByPk(id);
       if (!post) {
@@ -400,6 +408,12 @@ router.put(
 
       if (text !== undefined) {
         post.text = text;
+      }
+      if (formationSize !== undefined) {
+        if (!["5", "7", "9", "11"].includes(String(formationSize))) {
+          return res.status(400).json({ error: "formationSize يجب أن يكون 5 أو 7 أو 9 أو 11" });
+        }
+        post.formationSize = String(formationSize);
       }
 
       await post.save();
