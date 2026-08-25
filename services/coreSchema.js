@@ -10,8 +10,14 @@ const {
   PlayerOfMonth,
   PlayerMatchStats,
   BookingAd,
+  AppSetting,
 } = require("../models");
 const { BAGHDAD_NAME } = require("./governorates");
+const {
+  DEFAULT_PLAYER_VERIFICATION_THRESHOLD,
+  PLAYER_VERIFICATION_THRESHOLD_KEY,
+  awardEligiblePlayers,
+} = require("./playerVerification");
 
 let coreSchemaPromise = null;
 const LEGACY_GAMES_SHIFT_MARKER = "legacy_games_plus_2h_v1";
@@ -221,6 +227,16 @@ async function ensureCoreSchema() {
         allowNull: false,
         defaultValue: true,
       });
+      await ensureColumn(queryInterface, usersTable, "isVerified", {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      });
+      await ensureColumn(queryInterface, usersTable, "verifiedAt", {
+        type: DataTypes.DATE,
+        allowNull: true,
+        defaultValue: null,
+      });
       await ensureColumn(queryInterface, usersTable, "governorateId", {
         type: DataTypes.INTEGER,
         allowNull: true,
@@ -233,6 +249,10 @@ async function ensureCoreSchema() {
       await User.update(
         { chatLastReadAt: new Date() },
         { where: { chatLastReadAt: null } }
+      );
+      await User.update(
+        { isVerified: false },
+        { where: { isVerified: null } }
       );
 
       const scopedModels = [
@@ -309,6 +329,13 @@ async function ensureCoreSchema() {
 
       await ensurePlayerOfMonthIndexes(queryInterface);
       await shiftLegacyGamesByTwoHours(queryInterface);
+
+      await AppSetting.findOrCreate({
+        where: { key: PLAYER_VERIFICATION_THRESHOLD_KEY },
+        defaults: { value: String(DEFAULT_PLAYER_VERIFICATION_THRESHOLD) },
+      });
+      // Existing players can earn the badge from their old match records too.
+      await awardEligiblePlayers();
     })().catch((error) => {
       coreSchemaPromise = null;
       throw error;

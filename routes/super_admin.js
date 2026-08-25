@@ -14,6 +14,11 @@ const {
 const { authenticateToken } = require("../middlewares/auth");
 const { requireRoles } = require("../middlewares/authorization");
 const { normalizeGovernorateName } = require("../services/governorates");
+const {
+  getPlayerVerificationThreshold,
+  setPlayerVerificationThreshold,
+  awardEligiblePlayers,
+} = require("../services/playerVerification");
 
 const router = express.Router();
 const saltRounds = 10;
@@ -22,6 +27,40 @@ const ADMIN_ACCOUNT_ROLES = ["admin", "super_admin", "photographer"];
 const GOVERNORATE_ADMIN_ROLES = ["admin"];
 const USER_ROLES = ["user", "admin"];
 const POSITIONS = ["GK", "CB", "LB", "RB", "CM", "AMF", "RWF", "LWF", "CF"];
+
+router.get(
+  "/super-admin/player-verification-settings",
+  authenticateToken,
+  requireRoles("super_admin"),
+  async (_req, res) => {
+    try {
+      return res.json({
+        verificationThreshold: await getPlayerVerificationThreshold(),
+      });
+    } catch (error) {
+      console.error("Error fetching player verification settings:", error);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+);
+
+router.put(
+  "/super-admin/player-verification-settings",
+  authenticateToken,
+  requireRoles("super_admin"),
+  async (req, res) => {
+    try {
+      const threshold = await setPlayerVerificationThreshold(
+        req.body?.verificationThreshold
+      );
+      const newlyVerified = await awardEligiblePlayers(threshold);
+      return res.json({ verificationThreshold: threshold, newlyVerified });
+    } catch (error) {
+      const message = error?.message || "Unable to update verification settings";
+      return res.status(400).json({ error: message });
+    }
+  }
+);
 
 function normalizePhone(phone = "") {
   const value = String(phone).trim();

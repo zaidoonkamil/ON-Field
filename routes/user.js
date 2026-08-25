@@ -551,6 +551,7 @@ router.get("/user-stats/:id", optionalAuthenticateToken, async (req, res) => {
       name: userJson.name,
       phone: userJson.phone,
       role: userJson.role,
+      isVerified: Boolean(userJson.isVerified),
       governorateId: userJson.governorateId,
       governorate: mapGovernorate(userJson.governorate),
       position: userJson.position || "",

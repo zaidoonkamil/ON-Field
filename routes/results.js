@@ -18,6 +18,7 @@ const {
   getGovernorateScope,
   ensureGovernorateAccess,
 } = require("../services/accessScope");
+const { awardVerificationIfEligible } = require("../services/playerVerification");
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
@@ -227,6 +228,7 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
           isMotm: motmUserId ? Number(p.userId) === Number(motmUserId) : false,
           individualAward: normalizeIndividualAward(p.individualAward),
         });
+        await awardVerificationIfEligible(Number(p.userId));
       }
     }
 
@@ -320,6 +322,7 @@ router.patch(
         }
         await stat.update(updates, { transaction });
       });
+      await awardVerificationIfEligible(userId);
 
       return res.json({
         message: "Player match stats updated successfully",

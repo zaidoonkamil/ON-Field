@@ -12,6 +12,7 @@ const MonthlySquadSlot = require("./MonthlySquadSlot");
 const Message = require("./Message");
 const PlayerOfMonth = require("./PlayerOfMonth");
 const BookingAd = require("./BookingAd");
+const AppSetting = require("./AppSetting");
 
 Governorate.hasMany(User, {
   foreignKey: "governorateId",
@@ -132,4 +133,5 @@ module.exports = {
   Message,
   PlayerOfMonth,
   BookingAd,
+  AppSetting,
 };
