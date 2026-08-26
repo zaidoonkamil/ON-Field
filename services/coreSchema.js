@@ -287,6 +287,24 @@ async function ensureCoreSchema() {
           allowNull: true,
         });
       }
+      await ensureColumn(
+        queryInterface,
+        PlayerOfMonth.getTableName(),
+        "storyImage",
+        {
+          type: PlayerOfMonth.rawAttributes.storyImage.type,
+          allowNull: true,
+        }
+      );
+      await ensureColumn(
+        queryInterface,
+        PlayerOfMonth.getTableName(),
+        "storyLayout",
+        {
+          type: PlayerOfMonth.rawAttributes.storyLayout.type,
+          allowNull: true,
+        }
+      );
 
       await ensureColumn(queryInterface, Game.getTableName(), "stadiumImage", {
         type: DataTypes.STRING,

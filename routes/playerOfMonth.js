@@ -15,13 +15,16 @@ const { rewardPlayerOfMonth } = require("../services/wallet");
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
 
-router.post("/player-of-month", authenticateToken, uploadImage.single("image"), async (req, res) => {
+router.post("/player-of-month", authenticateToken, uploadImage.fields([
+  { name: "image", maxCount: 1 },
+  { name: "storyImage", maxCount: 1 },
+]), async (req, res) => {
   try {
     if (!isAdmin(req.user) && !isSuperAdmin(req.user)) {
       return res.status(403).json({ error: "Not allowed" });
     }
 
-    const { userId, note } = req.body;
+    const { userId, note, storyLayout } = req.body;
     if (!userId) {
       return res.status(400).json({ error: "userId is required" });
     }
@@ -47,8 +50,18 @@ router.post("/player-of-month", authenticateToken, uploadImage.single("image"), 
       return res.status(400).json({ error: "governorateId is required for player of the month" });
     }
 
-    const file = req.file;
-    const imageData = file ? { main: file.filename } : null;
+    const imageFile = req.files?.image?.[0] || null;
+    const storyImageFile = req.files?.storyImage?.[0] || null;
+    const imageData = imageFile ? { main: imageFile.filename } : null;
+    const storyImageData = storyImageFile ? { main: storyImageFile.filename } : null;
+    let parsedStoryLayout = null;
+    if (storyLayout) {
+      try {
+        parsedStoryLayout = JSON.parse(storyLayout);
+      } catch (_) {
+        return res.status(400).json({ error: "storyLayout must be valid JSON" });
+      }
+    }
 
     const existing = await PlayerOfMonth.findOne({
       where: {
@@ -65,6 +78,8 @@ router.post("/player-of-month", authenticateToken, uploadImage.single("image"), 
         note: note || null,
       };
       if (imageData) updateObj.image = imageData;
+      if (storyImageData) updateObj.storyImage = storyImageData;
+      if (parsedStoryLayout) updateObj.storyLayout = parsedStoryLayout;
       await existing.update(updateObj);
     } else {
       playerOfMonth = await PlayerOfMonth.create({
@@ -73,6 +88,8 @@ router.post("/player-of-month", authenticateToken, uploadImage.single("image"), 
         governorateId: scopedGovernorateId,
         note: note || null,
         image: imageData || user.image || null,
+        storyImage: storyImageData,
+        storyLayout: parsedStoryLayout,
       });
       await rewardPlayerOfMonth({
         playerOfMonthId: playerOfMonth.id,
@@ -168,6 +185,8 @@ router.get("/player-of-month", optionalAuthenticateToken, async (req, res) => {
       month: item.month,
       note: item.note || "",
       image: responseImage,
+      storyImage: item.storyImage || null,
+      storyLayout: item.storyLayout || null,
       governorateId: item.governorateId,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
@@ -223,6 +242,8 @@ router.get("/player-of-month/history", optionalAuthenticateToken, async (req, re
         month: j.month,
         note: j.note || "",
         image: j.image || null,
+        storyImage: j.storyImage || null,
+        storyLayout: j.storyLayout || null,
         governorateId: j.governorateId,
         player: j.user
           ? {
