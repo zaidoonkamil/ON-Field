@@ -21,6 +21,39 @@ class ChatService {
     return typeof room === "string" && /^governorate_\d+$/.test(room);
   }
 
+  isAnnouncementRoom(room) {
+    return typeof room === "string" && /^announcements_(\d+|main)$/.test(room);
+  }
+
+  isSupportRoom(room) {
+    return typeof room === "string" && /^support_\d+$/.test(room);
+  }
+
+  getAnnouncementsRoomForGovernorateId(governorateId) {
+    const normalizedGovernorateId = Number(governorateId);
+    return Number.isInteger(normalizedGovernorateId) && normalizedGovernorateId > 0
+      ? `announcements_${normalizedGovernorateId}`
+      : "announcements_main";
+  }
+
+  getSupportRoomForUserId(userId) {
+    const normalizedUserId = Number(userId);
+    if (!Number.isInteger(normalizedUserId) || normalizedUserId <= 0) {
+      throw new Error("Invalid support user");
+    }
+    return `support_${normalizedUserId}`;
+  }
+
+  getSupportUserId(room) {
+    if (!this.isSupportRoom(room)) return null;
+    const userId = Number(room.split("_")[1]);
+    return Number.isInteger(userId) && userId > 0 ? userId : null;
+  }
+
+  isAdminRole(role) {
+    return ["admin", "super_admin"].includes(role);
+  }
+
   getRoomForGovernorateId(governorateId) {
     const normalizedGovernorateId = Number(governorateId);
     if (Number.isInteger(normalizedGovernorateId) && normalizedGovernorateId > 0) {
@@ -72,21 +105,45 @@ class ChatService {
         ? requestedRoom.trim()
         : defaultRoom;
 
-    if (!this.isScopedRoom(normalizedRequestedRoom)) {
-      return defaultRoom;
-    }
-
     const user = await User.findByPk(Number(userId), {
-      attributes: ["id", "governorateId"],
+      attributes: ["id", "governorateId", "role"],
     });
 
     if (!user) {
       throw new Error("User not found");
     }
 
-    const allowedRoom = await this.resolveCanonicalRoomForGovernorateId(
-      user.governorateId
-    );
+    if (this.isAnnouncementRoom(normalizedRequestedRoom)) {
+      const announcementRoom = this.getAnnouncementsRoomForGovernorateId(
+        user.governorateId
+      );
+      if (normalizedRequestedRoom !== announcementRoom) {
+        throw new Error("Not allowed for this room");
+      }
+      return announcementRoom;
+    }
+
+    if (this.isSupportRoom(normalizedRequestedRoom)) {
+      const supportUserId = this.getSupportUserId(normalizedRequestedRoom);
+      const supportUser = await User.findByPk(supportUserId, {
+        attributes: ["id", "governorateId"],
+      });
+      if (!supportUser) throw new Error("Support user not found");
+
+      const canAccessSupport =
+        Number(user.id) === Number(supportUserId) ||
+        user.role === "super_admin" ||
+        (user.role === "admin" &&
+          Number(user.governorateId) === Number(supportUser.governorateId));
+      if (!canAccessSupport) throw new Error("Not allowed for this room");
+      return normalizedRequestedRoom;
+    }
+
+    if (!this.isScopedRoom(normalizedRequestedRoom)) {
+      return defaultRoom;
+    }
+
+    const allowedRoom = await this.resolveCanonicalRoomForGovernorateId(user.governorateId);
     const scopedGovernorateRoom = this.getRoomForGovernorateId(user.governorateId);
 
     if (
@@ -97,6 +154,19 @@ class ChatService {
     }
 
     return allowedRoom;
+  }
+
+  async canUserSendToRoom(userId, room) {
+    const user = await User.findByPk(Number(userId), {
+      attributes: ["id", "role"],
+    });
+    if (!user) throw new Error("User not found");
+
+    if (this.isAnnouncementRoom(room) && !this.isAdminRole(user.role)) {
+      return false;
+    }
+
+    return true;
   }
 
   async ensureMessageSchema() {
@@ -471,6 +541,9 @@ class ChatService {
       const userId = Number(payload.userId);
       const messageContent = typeof payload.content === "string" ? payload.content.trim() : "";
       const targetRoom = await this.resolveRoomForUser(userId, payload.room);
+      if (!(await this.canUserSendToRoom(userId, targetRoom))) {
+        throw new Error("Only admins can publish announcements");
+      }
       const mediaUrl = payload.mediaUrl || null;
       const resolvedMediaType = mediaUrl
         ? this.resolveMediaType(payload.mediaType, mediaUrl)
@@ -796,7 +869,7 @@ class ChatService {
     const senderName = sender?.name || "User";
     let eligibleUserIds = null;
 
-    if (this.isScopedRoom(payload.room)) {
+    if (this.isScopedRoom(payload.room) || this.isAnnouncementRoom(payload.room)) {
       const senderUser = await User.findByPk(senderId, {
         attributes: ["governorateId"],
       });
@@ -810,6 +883,28 @@ class ChatService {
             .map((user) => Number(user.id))
             .filter((id) => Number.isInteger(id) && id > 0)
         : [];
+    }
+
+    if (this.isSupportRoom(payload.room)) {
+      const supportUserId = this.getSupportUserId(payload.room);
+      if (supportUserId && Number(senderId) !== Number(supportUserId)) {
+        eligibleUserIds = [supportUserId];
+      } else {
+        const supportUser = await User.findByPk(supportUserId, {
+          attributes: ["governorateId"],
+        });
+        eligibleUserIds = supportUser?.governorateId
+          ? (
+              await User.findAll({
+                where: {
+                  governorateId: supportUser.governorateId,
+                  role: { [Op.in]: ["admin", "super_admin"] },
+                },
+                attributes: ["id"],
+              })
+            ).map((user) => Number(user.id))
+          : [];
+      }
     }
 
     await sendChatNotificationToAllExcept({

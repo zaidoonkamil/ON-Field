@@ -87,6 +87,92 @@ router.post("/api/chat/read", authenticateToken, async (req, res) => {
   }
 });
 
+router.get("/api/chat/admin-conversations", authenticateToken, async (req, res) => {
+  try {
+    const admin = await ensureAdminPermission(req.user.id);
+    const supportMessages = await Message.findAll({
+      where: { room: { [Op.like]: "support_%" } },
+      include: chatService.getMessageIncludes(),
+      order: [["createdAt", "DESC"]],
+    });
+
+    const latestMessageByUserId = new Map();
+    for (const message of supportMessages) {
+      const supportUserId = chatService.getSupportUserId(message.room);
+      if (supportUserId && !latestMessageByUserId.has(supportUserId)) {
+        latestMessageByUserId.set(supportUserId, message);
+      }
+    }
+
+    const supportUserIds = [...latestMessageByUserId.keys()];
+    if (!supportUserIds.length) {
+      return res.json({ success: true, conversations: [] });
+    }
+
+    const users = await User.findAll({
+      where: {
+        id: { [Op.in]: supportUserIds },
+        ...(admin.role === "admin" ? { governorateId: admin.governorateId } : {}),
+      },
+      attributes: ["id", "name", "image", "position", "role", "isVerified"],
+    });
+    const usersById = new Map(users.map((user) => [Number(user.id), user]));
+
+    const conversations = supportUserIds
+      .map((userId) => {
+        const user = usersById.get(Number(userId));
+        const message = latestMessageByUserId.get(Number(userId));
+        if (!user || !message) return null;
+        const formattedMessage = chatService.formatMessage(message);
+        return {
+          user: {
+            id: user.id,
+            name: user.name,
+            image: user.image,
+            position: user.position,
+            role: user.role,
+            isVerified: user.isVerified === true,
+          },
+          room: chatService.getSupportRoomForUserId(user.id),
+          lastMessage: chatService.getMessagePreview(formattedMessage),
+          lastMessageAt: message.createdAt,
+        };
+      })
+      .filter(Boolean);
+
+    return res.json({ success: true, conversations });
+  } catch (error) {
+    return res.status(error?.status || 500).json({
+      success: false,
+      message: error?.message || "Unable to load admin conversations",
+    });
+  }
+});
+
+router.get("/api/chat/private-messages", authenticateToken, async (req, res) => {
+  try {
+    const { user, room } = await resolveAuthenticatedChatUser(
+      req,
+      req.query.userId || req.user?.id,
+      req.query.room
+    );
+    if (!chatService.isSupportRoom(room)) {
+      return res.status(400).json({ success: false, message: "Private room is required" });
+    }
+    const limit = req.query.limit || 50;
+    const [messages, pinnedMessage] = await Promise.all([
+      chatService.getAllMessages(room, parseInt(limit, 10)),
+      chatService.getPinnedMessage(room),
+    ]);
+    return res.json({ success: true, messages, pinnedMessage, room, userId: user.id });
+  } catch (error) {
+    return res.status(error?.status || 500).json({
+      success: false,
+      message: error?.message || "Unable to load private messages",
+    });
+  }
+});
+
 router.post("/api/chat/polls", authenticateToken, async (req, res) => {
   try {
     const admin = await ensureAdminPermission(req.user.id);
@@ -182,6 +268,44 @@ router.post("/api/chat/upload", upload.single("file"), async (req, res) => {
       success: false,
       message: "خطأ في رفع ملف الدردشة",
       error: error.message,
+    });
+  }
+});
+
+router.post("/api/chat/private-messages", authenticateToken, upload.single("file"), async (req, res) => {
+  try {
+    const userId = Number(req.body?.userId || req.user?.id);
+    if (userId !== Number(req.user?.id)) {
+      return res.status(403).json({ success: false, message: "Not allowed" });
+    }
+    const room = await chatService.resolveRoomForUser(userId, req.body?.room);
+    if (!chatService.isSupportRoom(room)) {
+      return res.status(400).json({ success: false, message: "Private room is required" });
+    }
+
+    const uploadedMediaUrl = req.file ? `/uploads/${req.file.filename}` : (req.body?.mediaUrl || null);
+    const message = await chatService.saveMessage({
+      userId,
+      content: req.body?.content || "",
+      room,
+      mediaUrl: uploadedMediaUrl,
+      mediaType: req.body?.mediaType || req.file?.mimetype,
+      mentions: req.body?.mentions,
+      replyToMessageId: req.body?.replyToMessageId,
+    });
+    const io = req.app.get("io");
+    io?.to(room).emit("receive_message", message);
+    res.status(201).json({ success: true, data: message });
+
+    setImmediate(() => {
+      chatService.notifyRoomUsers({ message, sender: message.user }).catch((error) => {
+        console.error("Error sending private chat notification:", error);
+      });
+    });
+  } catch (error) {
+    return res.status(error?.status || 500).json({
+      success: false,
+      message: error?.message || "Unable to send private message",
     });
   }
 });
@@ -286,7 +410,7 @@ router.get("/api/chat/messages", async (req, res) => {
   try {
     const requestedRoom = req.query.room || chatService.getDefaultRoom();
     const room =
-      req.query.userId && chatService.isScopedRoom(requestedRoom)
+      req.query.userId
         ? await chatService.resolveRoomForUser(req.query.userId, requestedRoom)
         : requestedRoom;
     const limit = req.query.limit || 50;
