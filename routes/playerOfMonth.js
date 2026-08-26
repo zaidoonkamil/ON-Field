@@ -10,6 +10,7 @@ const {
   applyGovernorateScope,
   ensureGovernorateAccess,
 } = require("../services/accessScope");
+const { rewardPlayerOfMonth } = require("../services/wallet");
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
@@ -56,6 +57,7 @@ router.post("/player-of-month", authenticateToken, uploadImage.single("image"), 
       },
     });
 
+    let playerOfMonth = existing;
     if (existing) {
       const updateObj = {
         userId: user.id,
@@ -65,12 +67,17 @@ router.post("/player-of-month", authenticateToken, uploadImage.single("image"), 
       if (imageData) updateObj.image = imageData;
       await existing.update(updateObj);
     } else {
-      await PlayerOfMonth.create({
+      playerOfMonth = await PlayerOfMonth.create({
         month: selectedMonth,
         userId: user.id,
         governorateId: scopedGovernorateId,
         note: note || null,
         image: imageData || user.image || null,
+      });
+      await rewardPlayerOfMonth({
+        playerOfMonthId: playerOfMonth.id,
+        userId: user.id,
+        month: selectedMonth,
       });
     }
 

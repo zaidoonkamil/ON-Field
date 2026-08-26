@@ -48,6 +48,12 @@ const User = sequelize.define("User", {
         type: DataTypes.DATE,
         allowNull: true,
     },
+    walletBalance: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+        validate: { min: 0 },
+    },
     governorateId: {
         type: DataTypes.INTEGER,
         allowNull: true,

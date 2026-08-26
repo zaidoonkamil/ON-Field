@@ -19,6 +19,10 @@ const {
   setPlayerVerificationThreshold,
   awardEligiblePlayers,
 } = require("../services/playerVerification");
+const {
+  getWalletRewardSettings,
+  setWalletRewardSettings,
+} = require("../services/wallet");
 
 const router = express.Router();
 const saltRounds = 10;
@@ -58,6 +62,33 @@ router.put(
     } catch (error) {
       const message = error?.message || "Unable to update verification settings";
       return res.status(400).json({ error: message });
+    }
+  }
+);
+
+router.get(
+  "/super-admin/wallet-reward-settings",
+  authenticateToken,
+  requireRoles("super_admin"),
+  async (_req, res) => {
+    try {
+      return res.json(await getWalletRewardSettings());
+    } catch (error) {
+      console.error("Error fetching wallet reward settings:", error);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+);
+
+router.put(
+  "/super-admin/wallet-reward-settings",
+  authenticateToken,
+  requireRoles("super_admin"),
+  async (req, res) => {
+    try {
+      return res.json(await setWalletRewardSettings(req.body || {}));
+    } catch (error) {
+      return res.status(400).json({ error: error.message || "Unable to update wallet settings" });
     }
   }
 );

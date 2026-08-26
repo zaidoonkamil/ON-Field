@@ -13,6 +13,10 @@ const Message = require("./Message");
 const PlayerOfMonth = require("./PlayerOfMonth");
 const BookingAd = require("./BookingAd");
 const AppSetting = require("./AppSetting");
+const WalletTransaction = require("./WalletTransaction");
+const ChatPoll = require("./ChatPoll");
+const ChatPollOption = require("./ChatPollOption");
+const ChatPollVote = require("./ChatPollVote");
 
 Governorate.hasMany(User, {
   foreignKey: "governorateId",
@@ -114,9 +118,20 @@ Message.belongsTo(Message, { foreignKey: "replyToMessageId", as: "replyTo" });
 Message.hasMany(Message, { foreignKey: "replyToMessageId", as: "replies" });
 User.hasMany(Message, { foreignKey: "pinnedByUserId", as: "pinnedMessages", onDelete: "SET NULL" });
 Message.belongsTo(User, { foreignKey: "pinnedByUserId", as: "pinnedBy" });
+Message.hasOne(ChatPoll, { foreignKey: "messageId", as: "poll", onDelete: "CASCADE", hooks: true });
+ChatPoll.belongsTo(Message, { foreignKey: "messageId", as: "message" });
+ChatPoll.hasMany(ChatPollOption, { foreignKey: "pollId", as: "options", onDelete: "CASCADE", hooks: true });
+ChatPollOption.belongsTo(ChatPoll, { foreignKey: "pollId", as: "poll" });
+ChatPoll.hasMany(ChatPollVote, { foreignKey: "pollId", as: "votes", onDelete: "CASCADE", hooks: true });
+ChatPollVote.belongsTo(ChatPoll, { foreignKey: "pollId", as: "poll" });
+ChatPollOption.hasMany(ChatPollVote, { foreignKey: "optionId", as: "votes", onDelete: "CASCADE", hooks: true });
+ChatPollVote.belongsTo(ChatPollOption, { foreignKey: "optionId", as: "option" });
 
 User.hasMany(PlayerOfMonth, { foreignKey: "userId", as: "playerOfMonths", onDelete: "CASCADE" });
 PlayerOfMonth.belongsTo(User, { foreignKey: "userId", as: "user" });
+
+User.hasMany(WalletTransaction, { foreignKey: "userId", as: "walletTransactions", onDelete: "CASCADE" });
+WalletTransaction.belongsTo(User, { foreignKey: "userId", as: "user" });
 
 module.exports = {
   User,
@@ -134,4 +149,8 @@ module.exports = {
   PlayerOfMonth,
   BookingAd,
   AppSetting,
+  WalletTransaction,
+  ChatPoll,
+  ChatPollOption,
+  ChatPollVote,
 };

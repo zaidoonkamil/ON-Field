@@ -4,7 +4,8 @@ const chatService = require("../services/chatService");
 const upload = require("../middlewares/uploads");
 const { connectedUsers } = require("../services/socketService");
 const { Op } = require("sequelize");
-const { User, Message } = require("../models");
+const { User, Message, ChatPoll, ChatPollOption, ChatPollVote } = require("../models");
+const sequelize = require("../config/db");
 const { authenticateToken } = require("../middlewares/auth");
 
 async function ensureAdminPermission(userId) {
@@ -83,6 +84,74 @@ router.post("/api/chat/read", authenticateToken, async (req, res) => {
       success: false,
       message: error?.message || "Unable to mark chat as read",
     });
+  }
+});
+
+router.post("/api/chat/polls", authenticateToken, async (req, res) => {
+  try {
+    const admin = await ensureAdminPermission(req.user.id);
+    const question = String(req.body?.question || "").trim();
+    const options = Array.isArray(req.body?.options)
+      ? req.body.options.map((option) => String(option || "").trim()).filter(Boolean)
+      : [];
+    if (!question || options.length < 2 || options.length > 6) {
+      return res.status(400).json({ success: false, message: "Poll needs a question and 2 to 6 options" });
+    }
+
+    const room = await chatService.resolveRoomForUser(
+      admin.id,
+      req.body?.room || chatService.getDefaultRoom()
+    );
+    const message = await sequelize.transaction(async (transaction) => {
+      const createdMessage = await Message.create({
+        userId: admin.id,
+        content: question,
+        room,
+        mediaType: "poll",
+      }, { transaction });
+      const poll = await ChatPoll.create({
+        messageId: createdMessage.id,
+        question,
+        createdByUserId: admin.id,
+      }, { transaction });
+      await ChatPollOption.bulkCreate(
+        options.map((text, index) => ({ pollId: poll.id, text, sortOrder: index })),
+        { transaction }
+      );
+      return createdMessage;
+    });
+
+    const fullMessage = await Message.findByPk(message.id, { include: chatService.getMessageIncludes() });
+    const payload = chatService.formatMessage(fullMessage);
+    req.app.get("io")?.to(room).emit("receive_message", payload);
+    return res.status(201).json({ success: true, data: payload });
+  } catch (error) {
+    return res.status(error?.status || 500).json({ success: false, message: error.message || "Unable to create poll" });
+  }
+});
+
+router.post("/api/chat/polls/:pollId/vote", authenticateToken, async (req, res) => {
+  try {
+    const pollId = Number(req.params.pollId);
+    const optionId = Number(req.body?.optionId);
+    if (!Number.isInteger(pollId) || !Number.isInteger(optionId)) {
+      return res.status(400).json({ success: false, message: "Invalid poll vote" });
+    }
+    const poll = await ChatPoll.findByPk(pollId, { include: [{ model: Message, as: "message" }] });
+    if (!poll || !poll.message) return res.status(404).json({ success: false, message: "Poll not found" });
+    if (poll.isClosed) return res.status(403).json({ success: false, message: "This poll is closed" });
+    const room = await chatService.resolveRoomForUser(req.user.id, poll.message.room);
+    if (room !== poll.message.room) return res.status(403).json({ success: false, message: "Not allowed" });
+    const option = await ChatPollOption.findOne({ where: { id: optionId, pollId } });
+    if (!option) return res.status(404).json({ success: false, message: "Poll option not found" });
+
+    await ChatPollVote.upsert({ pollId, optionId, userId: req.user.id });
+    const fullMessage = await Message.findByPk(poll.messageId, { include: chatService.getMessageIncludes() });
+    const payload = chatService.formatMessage(fullMessage);
+    req.app.get("io")?.to(room).emit("poll_updated", { messageId: poll.messageId, poll: payload.poll });
+    return res.json({ success: true, data: { poll: payload.poll } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Unable to save vote" });
   }
 });
 

@@ -17,6 +17,7 @@ const {
   applyGovernorateScope,
   ensureGovernorateAccess,
 } = require("../services/accessScope");
+const { recordWalletTransaction } = require("../services/wallet");
 
 function buildFormation(size) {
   if (String(size) === "5") {
@@ -372,7 +373,7 @@ router.get("/games/:id", optionalAuthenticateToken, async (req, res) => {
       include: [{
         model: User,
         as: "user",
-        attributes: { exclude: ["password"] },
+        attributes: { exclude: ["password", "walletBalance"] },
       }],
       order: [["team", "ASC"], ["role", "ASC"], ["code", "ASC"]],
     });
@@ -449,11 +450,16 @@ router.post("/games/:id/book", upload.none(), authenticateToken, async (req, res
   try {
     const gameId = Number(req.params.id);
     const { team, code } = req.body;
+    const paymentMethod = String(req.body.paymentMethod || "cash").trim().toLowerCase();
     const userId = req.user.id;
 
     if (!team || !code) {
       await t.rollback();
       return res.status(400).json({ error: "team و code مطلوبات" });
+    }
+    if (!["cash", "wallet"].includes(paymentMethod)) {
+      await t.rollback();
+      return res.status(400).json({ error: "paymentMethod must be cash or wallet" });
     }
 
     const game = await Game.findByPk(gameId, { transaction: t });
@@ -504,8 +510,32 @@ router.post("/games/:id/book", upload.none(), authenticateToken, async (req, res
       return res.status(409).json({ error: "هذا المقعد محجوز" });
     }
 
+    const walletDebit = paymentMethod === "wallet" ? Number(game.price || 0) : 0;
+    if (!Number.isInteger(walletDebit) || walletDebit < 0) {
+      await t.rollback();
+      return res.status(400).json({ error: "Invalid game price for wallet payment" });
+    }
+    if (paymentMethod === "wallet" && walletDebit > 0) {
+      try {
+        await recordWalletTransaction({
+          userId,
+          amount: -walletDebit,
+          type: "booking_wallet_payment",
+          referenceKey: `booking_wallet_payment:${slot.id}`,
+          description: `دفع حجز مباراة ${game.stadiumName || game.id} من المحفظة`,
+          metadata: { gameId, slotId: slot.id },
+          transaction: t,
+        });
+      } catch (error) {
+        await t.rollback();
+        return res.status(400).json({ error: error.message || "Insufficient wallet balance" });
+      }
+    }
+
     slot.userId = userId;
     slot.bookedAt = new Date();
+    slot.paymentMethod = paymentMethod;
+    slot.walletDebit = walletDebit;
     await slot.save({ transaction: t });
 
     await t.commit();
@@ -549,8 +579,23 @@ router.post("/games/:id/unbook", upload.none(), authenticateToken, async (req, r
       return res.status(403).json({ error: "Not allowed" });
     }
 
+    const walletDebit = Number(slot.walletDebit || 0);
+    if (slot.paymentMethod === "wallet" && walletDebit > 0) {
+      await recordWalletTransaction({
+        userId,
+        amount: walletDebit,
+        type: "booking_wallet_refund",
+        referenceKey: `booking_wallet_refund:${slot.id}`,
+        description: "استرجاع مبلغ حجز ملغى إلى المحفظة",
+        metadata: { gameId, slotId: slot.id },
+        transaction: t,
+      });
+    }
+
     slot.userId = null;
     slot.bookedAt = null;
+    slot.paymentMethod = "cash";
+    slot.walletDebit = 0;
     await slot.save({ transaction: t });
 
     await t.commit();

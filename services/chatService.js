@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { DataTypes, Op } = require("sequelize");
 const sequelize = require("../config/db");
-const { Message, User, Governorate } = require("../models");
+const { Message, User, Governorate, ChatPoll, ChatPollOption, ChatPollVote } = require("../models");
 const { sendNotificationToUser, sendChatNotificationToAllExcept } = require("./notifications");
 
 const MAX_MESSAGES_PER_ROOM = 100;
@@ -325,6 +325,17 @@ class ChatService {
         attributes: ["id", "name", "image", "position", "role"],
       },
       {
+        model: ChatPoll,
+        as: "poll",
+        include: [
+          {
+            model: ChatPollOption,
+            as: "options",
+            include: [{ model: ChatPollVote, as: "votes", attributes: ["id", "optionId"] }],
+          },
+        ],
+      },
+      {
         model: Message,
         as: "replyTo",
         attributes: ["id", "content", "mediaUrl", "mediaType", "createdAt"],
@@ -377,6 +388,25 @@ class ChatService {
         }
       : null;
 
+    const poll = plainMessage.poll
+      ? {
+          id: Number(plainMessage.poll.id),
+          question: plainMessage.poll.question || plainMessage.content || "",
+          isClosed: plainMessage.poll.isClosed === true,
+          totalVotes: (plainMessage.poll.options || []).reduce(
+            (total, option) => total + (option.votes || []).length,
+            0
+          ),
+          options: (plainMessage.poll.options || [])
+            .sort((a, b) => Number(a.sortOrder) - Number(b.sortOrder))
+            .map((option) => ({
+              id: Number(option.id),
+              text: option.text || "",
+              votes: (option.votes || []).length,
+            })),
+        }
+      : null;
+
     return {
       ...plainMessage,
       content: plainMessage.content || "",
@@ -387,6 +417,7 @@ class ChatService {
       isPinned: plainMessage.isPinned === true,
       pinnedAt: plainMessage.pinnedAt || null,
       pinnedBy,
+      poll,
     };
   }
 

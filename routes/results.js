@@ -19,6 +19,7 @@ const {
   ensureGovernorateAccess,
 } = require("../services/accessScope");
 const { awardVerificationIfEligible } = require("../services/playerVerification");
+const { rewardGoalForMatch } = require("../services/wallet");
 
 const calcOverall = (u) =>
   Math.round((u.spd + u.fin + u.pas + u.skl + u.tkl + u.str) / 6);
@@ -229,6 +230,11 @@ router.post("/games/:id/results", authenticateToken, async (req, res) => {
           individualAward: normalizeIndividualAward(p.individualAward),
         });
         await awardVerificationIfEligible(Number(p.userId));
+        await rewardGoalForMatch({
+          gameId,
+          userId: Number(p.userId),
+          goals: p.goals ?? 0,
+        });
       }
     }
 
@@ -323,6 +329,7 @@ router.patch(
         await stat.update(updates, { transaction });
       });
       await awardVerificationIfEligible(userId);
+      await rewardGoalForMatch({ gameId, userId, goals: stat.goals });
 
       return res.json({
         message: "Player match stats updated successfully",

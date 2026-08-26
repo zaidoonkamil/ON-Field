@@ -4,6 +4,7 @@ const {
   Governorate,
   User,
   Game,
+  GameSlot,
   Post,
   LiveStream,
   MonthlySquad,
@@ -11,6 +12,7 @@ const {
   PlayerMatchStats,
   BookingAd,
   AppSetting,
+  WalletTransaction,
 } = require("../models");
 const { BAGHDAD_NAME } = require("./governorates");
 const {
@@ -18,6 +20,12 @@ const {
   PLAYER_VERIFICATION_THRESHOLD_KEY,
   awardEligiblePlayers,
 } = require("./playerVerification");
+const {
+  GOAL_REWARD_KEY,
+  PLAYER_OF_MONTH_REWARD_KEY,
+  DEFAULT_GOAL_REWARD,
+  DEFAULT_PLAYER_OF_MONTH_REWARD,
+} = require("./wallet");
 
 let coreSchemaPromise = null;
 const LEGACY_GAMES_SHIFT_MARKER = "legacy_games_plus_2h_v1";
@@ -246,6 +254,11 @@ async function ensureCoreSchema() {
         allowNull: true,
         defaultValue: DataTypes.NOW,
       });
+      await ensureColumn(queryInterface, usersTable, "walletBalance", {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+      });
       await User.update(
         { chatLastReadAt: new Date() },
         { where: { chatLastReadAt: null } }
@@ -253,6 +266,10 @@ async function ensureCoreSchema() {
       await User.update(
         { isVerified: false },
         { where: { isVerified: null } }
+      );
+      await User.update(
+        { walletBalance: 0 },
+        { where: { walletBalance: null } }
       );
 
       const scopedModels = [
@@ -292,6 +309,17 @@ async function ensureCoreSchema() {
           defaultValue: null,
         }
       );
+      await WalletTransaction.sync();
+      await ensureColumn(queryInterface, GameSlot.getTableName(), "paymentMethod", {
+        type: DataTypes.STRING(16),
+        allowNull: false,
+        defaultValue: "cash",
+      });
+      await ensureColumn(queryInterface, GameSlot.getTableName(), "walletDebit", {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+      });
 
       const [baghdad] = await Governorate.findOrCreate({
         where: { name: BAGHDAD_NAME },
@@ -333,6 +361,14 @@ async function ensureCoreSchema() {
       await AppSetting.findOrCreate({
         where: { key: PLAYER_VERIFICATION_THRESHOLD_KEY },
         defaults: { value: String(DEFAULT_PLAYER_VERIFICATION_THRESHOLD) },
+      });
+      await AppSetting.findOrCreate({
+        where: { key: GOAL_REWARD_KEY },
+        defaults: { value: String(DEFAULT_GOAL_REWARD) },
+      });
+      await AppSetting.findOrCreate({
+        where: { key: PLAYER_OF_MONTH_REWARD_KEY },
+        defaults: { value: String(DEFAULT_PLAYER_OF_MONTH_REWARD) },
       });
       // Existing players can earn the badge from their old match records too.
       await awardEligiblePlayers();

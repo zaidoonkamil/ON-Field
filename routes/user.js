@@ -12,7 +12,7 @@ const {
   PlayerOfMonth,
 } = require("../models");
 const uploadImage = require("../middlewares/uploads");
-const { optionalAuthenticateToken } = require("../middlewares/auth");
+const { authenticateToken, optionalAuthenticateToken } = require("../middlewares/auth");
 const { normalizeGovernorateName } = require("../services/governorates");
 const {
   getGovernorateScope,
@@ -20,6 +20,7 @@ const {
 } = require("../services/accessScope");
 const { createOtp, verifyOtp } = require("../services/otpService");
 const { sendWhatsAppText } = require("../services/waSender");
+const { getWalletSummary } = require("../services/wallet");
 
 const router = express.Router();
 const upload = multer();
@@ -27,6 +28,20 @@ const saltRounds = 10;
 
 const POSITIONS = ["GK", "CB", "LB", "RB", "CM", "AMF", "RWF", "LWF", "CF"];
 const GOVERNORATE_ADMIN_ROLES = ["admin"];
+
+router.get("/wallet/me", authenticateToken, async (req, res) => {
+  try {
+    const wallet = await getWalletSummary(req.user.id);
+    if (!wallet) return res.status(404).json({ error: "User not found" });
+    return res.json({
+      balance: wallet.balance,
+      transactions: wallet.transactions.map((entry) => entry.toJSON()),
+    });
+  } catch (error) {
+    console.error("Unable to load wallet:", error);
+    return res.status(500).json({ error: "Unable to load wallet" });
+  }
+});
 
 const normalizePhone = (phone = "") => {
   phone = String(phone).trim();
@@ -396,7 +411,7 @@ router.get("/usersOnly", optionalAuthenticateToken, async (req, res) => {
       limit,
       offset,
       order: [["createdAt", "DESC"]],
-      attributes: { exclude: ["password"] },
+      attributes: { exclude: ["password", "walletBalance"] },
       include: [{ model: Governorate, as: "governorate" }],
     });
 
@@ -423,7 +438,7 @@ router.get("/user/:id", optionalAuthenticateToken, async (req, res) => {
     }
 
     const user = await User.findByPk(req.params.id, {
-      attributes: { exclude: ["password"] },
+      attributes: { exclude: ["password", "walletBalance"] },
       include: [{ model: Governorate, as: "governorate" }],
     });
 

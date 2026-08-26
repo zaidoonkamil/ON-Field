@@ -31,6 +31,9 @@ const GameSlot = sequelize.define("GameSlot", {
 
   userId: { type: DataTypes.INTEGER, allowNull: true },
   bookedAt: { type: DataTypes.DATE, allowNull: true },
+  // Missing from requests made by old app versions, so cash remains the safe default.
+  paymentMethod: { type: DataTypes.STRING(16), allowNull: false, defaultValue: "cash" },
+  walletDebit: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
 }, { 
     timestamps: true 
 });
