@@ -493,6 +493,7 @@ router.get("/user-stats/:id", optionalAuthenticateToken, async (req, res) => {
           as: "stats",
           required: false,
           attributes: [
+            "id",
             "gameId",
             "team",
             "goals",
@@ -578,6 +579,26 @@ router.get("/user-stats/:id", optionalAuthenticateToken, async (req, res) => {
       },
       playerOfMonthAwards,
       individualAwards: mapIndividualAwards(statsRows),
+      matchStats: statsRows
+        .map((row) => ({
+          id: row.id,
+          gameId: row.gameId,
+          team: row.team,
+          goals: Number(row.goals) || 0,
+          assists: Number(row.assists) || 0,
+          yellowCards: Number(row.yellowCards) || 0,
+          redCards: Number(row.redCards) || 0,
+          isMotm: Boolean(row.isMotm),
+          individualAward: row.individualAward || null,
+          game: row.game
+            ? {
+                id: row.game.id,
+                stadiumName: row.game.stadiumName || "",
+                startsAt: row.game.startsAt || null,
+              }
+            : null,
+        }))
+        .sort((a, b) => String(b.game?.startsAt || "").localeCompare(String(a.game?.startsAt || ""))),
     });
   } catch (err) {
     console.error("Error fetching user stats:", err);
