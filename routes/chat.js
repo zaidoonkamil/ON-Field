@@ -10,7 +10,7 @@ const { authenticateToken } = require("../middlewares/auth");
 
 async function ensureAdminPermission(userId) {
   const user = await User.findByPk(Number(userId), {
-    attributes: ["id", "role"],
+    attributes: ["id", "role", "governorateId"],
   });
 
   if (!user) {
