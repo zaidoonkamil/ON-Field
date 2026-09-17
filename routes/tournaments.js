@@ -85,6 +85,7 @@ router.get("/tournaments/:id", authenticateToken, async (req, res) => {
 });
 
 router.post("/tournaments", authenticateToken, upload.single("bannerImage"), async (req, res) => {
+  let transaction;
   try {
     if (!canManage(req.user)) return res.status(403).json({ error: "Not allowed" });
     const { title, startsAt, formationSize, teamCapacity, competitionFormat } = req.body;
@@ -95,17 +96,20 @@ router.post("/tournaments", authenticateToken, upload.single("bannerImage"), asy
     if ((capacity === 64 && competitionFormat !== "groups") || (capacity !== 64 && competitionFormat !== "knockout")) {
       return res.status(400).json({ error: "نظام البطولة لا يطابق عدد الفرق" });
     }
+    transaction = await sequelize.transaction();
     const tournament = await Tournament.create({
       title: String(title).trim(), startsAt, formationSize: String(formationSize), teamCapacity: String(capacity),
       competitionFormat, bannerImage: req.file?.filename || null, governorateId: req.user.governorateId || null, createdBy: req.user.id,
-    });
+    }, { transaction });
     const slots = [];
     for (let teamNumber = 1; teamNumber <= capacity; teamNumber += 1) {
       for (const slot of formation(formationSize)) slots.push({ tournamentId: tournament.id, teamNumber, ...slot });
     }
-    await TournamentSlot.bulkCreate(slots);
+    await TournamentSlot.bulkCreate(slots, { transaction });
+    await transaction.commit();
     return res.status(201).json({ message: "تم إنشاء البطولة", tournamentId: tournament.id });
   } catch (error) {
+    if (transaction) await transaction.rollback();
     console.error("Create tournament error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
