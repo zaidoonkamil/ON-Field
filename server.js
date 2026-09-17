@@ -88,14 +88,12 @@ sequelize.sync({ force: false })
     await ensureCoreSchema();
     await ensureUserDeviceSchema();
     await chatService.enforceMessageLimitForAllRooms();
+    server.listen(1001, () => {
+      console.log("Server ready on http://localhost:1001");
+    });
     startCleanupJob();
     startGameReminderJob();
     startWhatsAppAutoInit();
     startPostVideoMigration();
   }).catch((err) => console.error("❌ Error syncing database:", err));
 
-
-server.listen(1001, () => {
-  console.log("🚀 Server running on http://localhost:1001");
-  console.log("💬 Chat room activated - Port 1001");
-});

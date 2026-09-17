@@ -76,6 +76,29 @@ async function ensureFormationSizeEnum(queryInterface, model) {
   });
 }
 
+async function ensureTournamentSchema(queryInterface) {
+  // These models were added after the original production schema. Keep this
+  // migration explicit so a restart creates every dependent table in order.
+  await Tournament.sync();
+  await TournamentTeam.sync();
+  await TournamentSlot.sync();
+
+  const nullableInteger = { type: DataTypes.INTEGER, allowNull: true };
+  await ensureColumn(queryInterface, Tournament.getTableName(), "bannerImage", {
+    type: DataTypes.STRING,
+    allowNull: true,
+  });
+  await ensureColumn(queryInterface, Tournament.getTableName(), "governorateId", nullableInteger);
+  await ensureColumn(queryInterface, Tournament.getTableName(), "createdBy", nullableInteger);
+  await ensureColumn(queryInterface, TournamentSlot.getTableName(), "tournamentTeamId", nullableInteger);
+  await ensureColumn(queryInterface, TournamentSlot.getTableName(), "userId", nullableInteger);
+  await ensureColumn(queryInterface, TournamentSlot.getTableName(), "assignedAt", {
+    type: DataTypes.DATE,
+    allowNull: true,
+  });
+  console.log("Tournament schema ready.");
+}
+
 async function backfillGovernorateId(model, baghdadId) {
   const tableName = model.getTableName();
   const queryInterface = sequelize.getQueryInterface();
@@ -331,11 +354,7 @@ async function ensureCoreSchema() {
         }
       );
       await WalletTransaction.sync();
-      // Tournament tables are introduced after the original schema. Sync them
-      // explicitly so existing production databases receive all three tables.
-      await Tournament.sync();
-      await TournamentTeam.sync();
-      await TournamentSlot.sync();
+      await ensureTournamentSchema(queryInterface);
       await ensureColumn(queryInterface, GameSlot.getTableName(), "paymentMethod", {
         type: DataTypes.STRING(16),
         allowNull: false,
