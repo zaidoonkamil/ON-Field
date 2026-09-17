@@ -17,6 +17,9 @@ const WalletTransaction = require("./WalletTransaction");
 const ChatPoll = require("./ChatPoll");
 const ChatPollOption = require("./ChatPollOption");
 const ChatPollVote = require("./ChatPollVote");
+const Tournament = require("./Tournament");
+const TournamentTeam = require("./TournamentTeam");
+const TournamentSlot = require("./TournamentSlot");
 
 Governorate.hasMany(User, {
   foreignKey: "governorateId",
@@ -133,6 +136,19 @@ PlayerOfMonth.belongsTo(User, { foreignKey: "userId", as: "user" });
 User.hasMany(WalletTransaction, { foreignKey: "userId", as: "walletTransactions", onDelete: "CASCADE" });
 WalletTransaction.belongsTo(User, { foreignKey: "userId", as: "user" });
 
+Governorate.hasMany(Tournament, { foreignKey: "governorateId", as: "tournaments", onDelete: "SET NULL" });
+Tournament.belongsTo(Governorate, { foreignKey: "governorateId", as: "governorate" });
+Tournament.hasMany(TournamentTeam, { foreignKey: "tournamentId", as: "teams", onDelete: "CASCADE", hooks: true });
+TournamentTeam.belongsTo(Tournament, { foreignKey: "tournamentId", as: "tournament" });
+Tournament.hasMany(TournamentSlot, { foreignKey: "tournamentId", as: "slots", onDelete: "CASCADE", hooks: true });
+TournamentSlot.belongsTo(Tournament, { foreignKey: "tournamentId", as: "tournament" });
+TournamentTeam.hasMany(TournamentSlot, { foreignKey: "tournamentTeamId", as: "slots", onDelete: "SET NULL" });
+TournamentSlot.belongsTo(TournamentTeam, { foreignKey: "tournamentTeamId", as: "team" });
+User.hasMany(TournamentTeam, { foreignKey: "createdBy", as: "createdTournamentTeams", onDelete: "SET NULL" });
+TournamentTeam.belongsTo(User, { foreignKey: "createdBy", as: "creator" });
+User.hasMany(TournamentSlot, { foreignKey: "userId", as: "tournamentSlots", onDelete: "SET NULL" });
+TournamentSlot.belongsTo(User, { foreignKey: "userId", as: "user" });
+
 module.exports = {
   User,
   Governorate,
@@ -153,4 +169,7 @@ module.exports = {
   ChatPoll,
   ChatPollOption,
   ChatPollVote,
+  Tournament,
+  TournamentTeam,
+  TournamentSlot,
 };
