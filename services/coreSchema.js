@@ -13,6 +13,9 @@ const {
   BookingAd,
   AppSetting,
   WalletTransaction,
+  Tournament,
+  TournamentTeam,
+  TournamentSlot,
 } = require("../models");
 const { BAGHDAD_NAME } = require("./governorates");
 const {
@@ -328,6 +331,11 @@ async function ensureCoreSchema() {
         }
       );
       await WalletTransaction.sync();
+      // Tournament tables are introduced after the original schema. Sync them
+      // explicitly so existing production databases receive all three tables.
+      await Tournament.sync();
+      await TournamentTeam.sync();
+      await TournamentSlot.sync();
       await ensureColumn(queryInterface, GameSlot.getTableName(), "paymentMethod", {
         type: DataTypes.STRING(16),
         allowNull: false,
