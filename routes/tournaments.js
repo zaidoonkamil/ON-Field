@@ -8,7 +8,21 @@ const { isAdmin, isSuperAdmin, getGovernorateScope, applyGovernorateScope, ensur
 const { Tournament, TournamentTeam, TournamentSlot, User } = require("../models");
 
 const router = express.Router();
-const userAttributes = ["id", "name", "image", "position", "isVerified"];
+const userAttributes = [
+  "id",
+  "name",
+  "phone",
+  "image",
+  "position",
+  "overall",
+  "spd",
+  "fin",
+  "pas",
+  "skl",
+  "tkl",
+  "str",
+  "isVerified",
+];
 
 function formation(size) {
   const count = Number(size);
