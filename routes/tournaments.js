@@ -177,6 +177,47 @@ router.post("/tournaments/:id/teams/join", authenticateToken, async (req, res) =
   } catch (error) { await transaction.rollback(); console.error("Join tournament team error:", error); return res.status(500).json({ error: "Internal Server Error" }); }
 });
 
+router.post("/tournaments/:id/teams/:teamId/slots/:slotId/assign", authenticateToken, async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const tournament = await tournamentForRequest(req, res, req.params.id, transaction);
+    if (!tournament) { await transaction.rollback(); return; }
+    const team = await TournamentTeam.findOne({
+      where: { id: req.params.teamId, tournamentId: tournament.id },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!team) { await transaction.rollback(); return res.status(404).json({ error: "الفريق غير موجود" }); }
+    if (!canManage(req.user) && Number(team.createdBy) !== Number(req.user.id)) {
+      await transaction.rollback();
+      return res.status(403).json({ error: "فقط قائد الفريق يستطيع إضافة اللاعبين" });
+    }
+    const userId = toNumber(req.body.userId);
+    const player = userId ? await User.findByPk(userId, { transaction, lock: transaction.LOCK.UPDATE }) : null;
+    if (!player || Number(player.governorateId) !== Number(tournament.governorateId)) {
+      await transaction.rollback();
+      return res.status(404).json({ error: "اللاعب غير متاح ضمن هذه المحافظة" });
+    }
+    if (await hasTournamentEntry(tournament.id, player.id, transaction)) {
+      await transaction.rollback();
+      return res.status(409).json({ error: "اللاعب مسجل مسبقاً في البطولة" });
+    }
+    const slot = await TournamentSlot.findOne({
+      where: { id: req.params.slotId, tournamentId: tournament.id, tournamentTeamId: team.id, userId: null },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!slot) { await transaction.rollback(); return res.status(409).json({ error: "هذا المركز لم يعد متاحاً" }); }
+    await slot.update({ userId: player.id, assignedAt: new Date() }, { transaction });
+    await transaction.commit();
+    return res.json({ message: "تمت إضافة اللاعب إلى الفريق" });
+  } catch (error) {
+    await transaction.rollback();
+    console.error("Assign tournament player error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 router.delete("/tournaments/:id/slots/:slotId", authenticateToken, async (req, res) => {
   try {
     if (!canManage(req.user)) return res.status(403).json({ error: "Not allowed" });
