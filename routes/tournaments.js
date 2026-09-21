@@ -157,10 +157,13 @@ async function ensureTournamentTeams(tournament, transaction) {
   return qualifiedTeams(tournament.id, transaction);
 }
 
-function knockoutRoundLabel(capacity, index) {
-  if (capacity === 16) return "دور 16";
-  if (capacity === 32) return "دور 32";
-  return `دور ${capacity}`;
+function knockoutRoundLabel(capacity, roundIndex = 1) {
+  const totalRounds = Math.log2(Number(capacity) || 2);
+  const teamsInRound = Math.max(2, Math.round((Number(capacity) || 2) / Math.pow(2, roundIndex - 1)));
+  if (roundIndex >= totalRounds) return "النهائي";
+  if (roundIndex === totalRounds - 1) return "نصف النهائي";
+  if (roundIndex === totalRounds - 2) return "ربع النهائي";
+  return `دور ${teamsInRound}`;
 }
 
 function groupNameForIndex(index) {
@@ -206,6 +209,52 @@ async function buildInitialTournamentMatches(tournament, transaction) {
     }
   }
   return matches;
+}
+
+async function advanceKnockoutWinner(tournament, match, winnerTeamId, transaction) {
+  if (!winnerTeamId || tournament.competitionFormat === "groups") return;
+
+  const capacity = Number(tournament.teamCapacity);
+  const totalRounds = Math.log2(capacity);
+  const currentRound = Number(match.roundIndex) || 1;
+  if (!Number.isInteger(totalRounds) || currentRound >= totalRounds) return;
+
+  const currentRoundMatches = await TournamentMatch.findAll({
+    where: { tournamentId: tournament.id, roundIndex: currentRound },
+    order: [["id", "ASC"]],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+  const currentIndex = currentRoundMatches.findIndex((item) => Number(item.id) === Number(match.id));
+  if (currentIndex < 0) return;
+
+  const nextRound = currentRound + 1;
+  const nextMatchIndex = Math.floor(currentIndex / 2);
+  const nextSide = currentIndex % 2 === 0 ? "teamAId" : "teamBId";
+  const nextRoundLabel = knockoutRoundLabel(capacity, nextRound);
+
+  let nextMatch = (await TournamentMatch.findAll({
+    where: { tournamentId: tournament.id, roundIndex: nextRound },
+    order: [["id", "ASC"]],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  }))[nextMatchIndex];
+
+  if (!nextMatch) {
+    nextMatch = await TournamentMatch.create({
+      tournamentId: tournament.id,
+      teamAId: null,
+      teamBId: null,
+      roundIndex: nextRound,
+      roundLabel: nextRoundLabel,
+      status: "scheduled",
+    }, { transaction });
+  }
+
+  await nextMatch.update({
+    [nextSide]: winnerTeamId,
+    roundLabel: nextRoundLabel,
+  }, { transaction });
 }
 
 router.get("/tournaments", optionalAuthenticateToken, async (req, res) => {
@@ -613,11 +662,15 @@ router.post("/tournaments/:id/matches/:matchId/results", authenticateToken, asyn
     }, { transaction });
 
     await TournamentPlayerMatchStats.destroy({ where: { tournamentMatchId: match.id }, transaction });
+    let goalsA = 0;
+    let goalsB = 0;
     for (const item of playersStats) {
       const userId = Number(item.userId);
       const teamSide = item.teamSide === "B" || item.team === "B" ? "B" : "A";
       const tournamentTeamId = teamSide === "A" ? match.teamAId : match.teamBId;
       if (!Number.isInteger(userId) || userId <= 0) continue;
+      if (teamSide === "A") goalsA += Number(item.goals) || 0;
+      if (teamSide === "B") goalsB += Number(item.goals) || 0;
       await TournamentPlayerMatchStats.create({
         tournamentMatchId: match.id,
         tournamentId: tournament.id,
@@ -633,6 +686,14 @@ router.post("/tournaments/:id/matches/:matchId/results", authenticateToken, asyn
       }, { transaction });
     }
     await match.update({ status: "closed" }, { transaction });
+    if (goalsA !== goalsB) {
+      await advanceKnockoutWinner(
+        tournament,
+        match,
+        goalsA > goalsB ? match.teamAId : match.teamBId,
+        transaction
+      );
+    }
     await transaction.commit();
     return res.json({ message: "تم حفظ نتيجة مباراة البطولة" });
   } catch (error) {

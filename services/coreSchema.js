@@ -16,6 +16,7 @@ const {
   Tournament,
   TournamentTeam,
   TournamentSlot,
+  TournamentMatch,
 } = require("../models");
 const { BAGHDAD_NAME } = require("./governorates");
 const {
@@ -82,6 +83,7 @@ async function ensureTournamentSchema(queryInterface) {
   await Tournament.sync();
   await TournamentTeam.sync();
   await TournamentSlot.sync();
+  await TournamentMatch.sync();
 
   const nullableInteger = { type: DataTypes.INTEGER, allowNull: true };
   await ensureColumn(queryInterface, Tournament.getTableName(), "bannerImage", {
@@ -96,6 +98,8 @@ async function ensureTournamentSchema(queryInterface) {
     type: DataTypes.DATE,
     allowNull: true,
   });
+  await queryInterface.changeColumn(TournamentMatch.getTableName(), "teamAId", nullableInteger);
+  await queryInterface.changeColumn(TournamentMatch.getTableName(), "teamBId", nullableInteger);
   console.log("Tournament schema ready.");
 }
 
