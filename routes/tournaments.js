@@ -207,6 +207,19 @@ async function buildInitialTournamentMatches(tournament, transaction) {
         roundLabel: label,
       });
     }
+    const totalRounds = Math.log2(capacity);
+    for (let roundIndex = 2; roundIndex <= totalRounds; roundIndex += 1) {
+      const matchCount = capacity / Math.pow(2, roundIndex);
+      for (let i = 0; i < matchCount; i += 1) {
+        matches.push({
+          tournamentId: tournament.id,
+          teamAId: null,
+          teamBId: null,
+          roundIndex,
+          roundLabel: knockoutRoundLabel(capacity, roundIndex),
+        });
+      }
+    }
   }
   return matches;
 }
@@ -241,20 +254,50 @@ async function advanceKnockoutWinner(tournament, match, winnerTeamId, transactio
   }))[nextMatchIndex];
 
   if (!nextMatch) {
-    nextMatch = await TournamentMatch.create({
-      tournamentId: tournament.id,
-      teamAId: null,
-      teamBId: null,
-      roundIndex: nextRound,
-      roundLabel: nextRoundLabel,
-      status: "scheduled",
-    }, { transaction });
+    const nextRoundMatchCount = capacity / Math.pow(2, nextRound);
+    const createdMatches = [];
+    for (let i = 0; i < nextRoundMatchCount; i += 1) {
+      createdMatches.push(await TournamentMatch.create({
+        tournamentId: tournament.id,
+        teamAId: null,
+        teamBId: null,
+        roundIndex: nextRound,
+        roundLabel: nextRoundLabel,
+        status: "scheduled",
+      }, { transaction }));
+    }
+    nextMatch = createdMatches[nextMatchIndex];
   }
 
   await nextMatch.update({
     [nextSide]: winnerTeamId,
     roundLabel: nextRoundLabel,
   }, { transaction });
+}
+
+async function syncClosedKnockoutWinners(tournament, transaction) {
+  if (tournament.competitionFormat === "groups") return;
+  const closedMatches = await TournamentMatch.findAll({
+    where: { tournamentId: tournament.id, status: "closed" },
+    order: [["roundIndex", "ASC"], ["id", "ASC"]],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+
+  for (const match of closedMatches) {
+    const playerStats = await TournamentPlayerMatchStats.findAll({
+      where: { tournamentMatchId: match.id },
+      transaction,
+    });
+    const score = matchScore(playerStats.map((item) => item.toJSON()));
+    if (score.goalsA === score.goalsB) continue;
+    await advanceKnockoutWinner(
+      tournament,
+      match,
+      score.goalsA > score.goalsB ? match.teamAId : match.teamBId,
+      transaction
+    );
+  }
 }
 
 router.get("/tournaments", optionalAuthenticateToken, async (req, res) => {
@@ -482,39 +525,7 @@ router.post("/tournaments/:id/draw/generate", authenticateToken, async (req, res
 
     await TournamentMatch.destroy({ where: { tournamentId: tournament.id }, transaction });
 
-    const capacity = Number(tournament.teamCapacity);
-    const matches = [];
-    if (capacity === 64 || tournament.competitionFormat === "groups") {
-      const groupCount = 16;
-      const grouped = Array.from({ length: groupCount }, () => []);
-      teams.forEach((team, index) => grouped[index % groupCount].push(team));
-      grouped.forEach((groupTeams, groupIndex) => {
-        for (let i = 0; i < groupTeams.length; i += 1) {
-          for (let j = i + 1; j < groupTeams.length; j += 1) {
-            matches.push({
-              tournamentId: tournament.id,
-              teamAId: groupTeams[i].id,
-              teamBId: groupTeams[j].id,
-              roundIndex: 1,
-              roundLabel: "دور المجموعات",
-              groupName: groupNameForIndex(groupIndex),
-            });
-          }
-        }
-      });
-    } else {
-      const label = knockoutRoundLabel(capacity);
-      for (let i = 0; i < teams.length; i += 2) {
-        if (!teams[i + 1]) break;
-        matches.push({
-          tournamentId: tournament.id,
-          teamAId: teams[i].id,
-          teamBId: teams[i + 1].id,
-          roundIndex: 1,
-          roundLabel: label,
-        });
-      }
-    }
+    const matches = await buildInitialTournamentMatches(tournament, transaction);
 
     await TournamentMatch.bulkCreate(matches, { transaction });
     await transaction.commit();
@@ -527,19 +538,24 @@ router.post("/tournaments/:id/draw/generate", authenticateToken, async (req, res
 });
 
 router.get("/tournaments/:id/matches", authenticateToken, async (req, res) => {
+  const transaction = await sequelize.transaction();
   try {
-    const tournament = await tournamentForRequest(req, res, req.params.id);
-    if (!tournament) return;
+    const tournament = await tournamentForRequest(req, res, req.params.id, transaction);
+    if (!tournament) { await transaction.rollback(); return; }
+    await syncClosedKnockoutWinners(tournament, transaction);
     const matches = await TournamentMatch.findAll({
       where: { tournamentId: tournament.id },
       include: teamInclude(),
       order: [["roundIndex", "ASC"], ["groupName", "ASC"], ["id", "ASC"]],
+      transaction,
     });
+    await transaction.commit();
     return res.json({
       tournament,
       matches: matches.map(serializeMatch),
     });
   } catch (error) {
+    await transaction.rollback();
     console.error("Get tournament matches error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
