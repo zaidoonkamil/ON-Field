@@ -5,7 +5,15 @@ const sequelize = require("../config/db");
 const upload = require("../middlewares/uploads");
 const { authenticateToken, optionalAuthenticateToken } = require("../middlewares/auth");
 const { isAdmin, isSuperAdmin, getGovernorateScope, applyGovernorateScope, ensureGovernorateAccess } = require("../services/accessScope");
-const { Tournament, TournamentTeam, TournamentSlot, User } = require("../models");
+const {
+  Tournament,
+  TournamentTeam,
+  TournamentSlot,
+  TournamentMatch,
+  TournamentMatchStats,
+  TournamentPlayerMatchStats,
+  User,
+} = require("../models");
 
 const router = express.Router();
 const userAttributes = [
@@ -14,7 +22,6 @@ const userAttributes = [
   "phone",
   "image",
   "position",
-  "overall",
   "spd",
   "fin",
   "pas",
@@ -63,6 +70,154 @@ function randomCode() {
   return crypto.randomBytes(4).toString("hex").toUpperCase();
 }
 
+const calcOverall = (u) =>
+  Math.round(((Number(u.spd) || 0) + (Number(u.fin) || 0) + (Number(u.pas) || 0) + (Number(u.skl) || 0) + (Number(u.tkl) || 0) + (Number(u.str) || 0)) / 6);
+
+const statsIncludeUser = [{ model: User, as: "user", attributes: { exclude: ["password"] } }];
+
+function teamInclude() {
+  return [
+    { model: TournamentTeam, as: "teamA", required: false },
+    { model: TournamentTeam, as: "teamB", required: false },
+    { model: TournamentMatchStats, as: "matchStats", required: false },
+    { model: TournamentPlayerMatchStats, as: "playerStats", required: false, include: statsIncludeUser },
+  ];
+}
+
+function matchScore(playerStats = []) {
+  const sum = (side) => playerStats
+    .filter((item) => item.teamSide === side)
+    .reduce((total, item) => total + (Number(item.goals) || 0), 0);
+  return { goalsA: sum("A"), goalsB: sum("B") };
+}
+
+function serializeMatch(match) {
+  const data = typeof match.toJSON === "function" ? match.toJSON() : match;
+  const playerStats = data.playerStats || [];
+  for (const stat of playerStats) {
+    attachOverallToUser(stat.user);
+  }
+  return {
+    ...data,
+    score: matchScore(playerStats),
+  };
+}
+
+function attachOverallToUser(user) {
+  if (!user) return;
+  const overall = calcOverall(user);
+  if (typeof user.setDataValue === "function") {
+    user.setDataValue("overall", overall);
+  } else {
+    user.overall = overall;
+  }
+}
+
+function attachOverallToSlots(slots = []) {
+  for (const slot of slots) {
+    attachOverallToUser(slot.user);
+  }
+}
+
+async function qualifiedTeams(tournamentId, transaction) {
+  return TournamentTeam.findAll({
+    where: { tournamentId },
+    order: [["teamNumber", "ASC"]],
+    transaction,
+  });
+}
+
+async function ensureTournamentTeamsForBookedSlots(tournament, transaction) {
+  const bookedTeamNumbers = await TournamentSlot.findAll({
+    where: {
+      tournamentId: tournament.id,
+      userId: { [Op.ne]: null },
+    },
+    attributes: ["teamNumber"],
+    group: ["teamNumber"],
+    order: [["teamNumber", "ASC"]],
+    transaction,
+  });
+
+  for (const row of bookedTeamNumbers) {
+    const teamNumber = Number(row.teamNumber);
+    if (!Number.isInteger(teamNumber)) continue;
+
+    let team = await TournamentTeam.findOne({
+      where: { tournamentId: tournament.id, teamNumber },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+
+    if (!team) {
+      team = await TournamentTeam.create({
+        tournamentId: tournament.id,
+        teamNumber,
+        name: `الفريق ${teamNumber}`,
+        joinCode: randomCode(),
+        createdBy: null,
+      }, { transaction });
+    }
+
+    await TournamentSlot.update(
+      { tournamentTeamId: team.id },
+      { where: { tournamentId: tournament.id, teamNumber }, transaction }
+    );
+  }
+}
+
+function knockoutRoundLabel(capacity, index) {
+  if (capacity === 16) return "دور 16";
+  if (capacity === 32) return "دور 32";
+  return `دور ${capacity}`;
+}
+
+function groupNameForIndex(index) {
+  const names = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي", "ك", "ل", "م", "ن", "س", "ع"];
+  return names[index] || `${index + 1}`;
+}
+
+async function buildInitialTournamentMatches(tournament, transaction) {
+  await ensureTournamentTeamsForBookedSlots(tournament, transaction);
+  const teams = await qualifiedTeams(tournament.id, transaction);
+  if (teams.length < 2) return [];
+
+  const capacity = Number(tournament.teamCapacity);
+  const matches = [];
+  if (capacity === 64 || tournament.competitionFormat === "groups") {
+    const groupCount = 16;
+    const grouped = Array.from({ length: groupCount }, () => []);
+    teams.forEach((team, index) => grouped[index % groupCount].push(team));
+    grouped.forEach((groupTeams, groupIndex) => {
+      for (let i = 0; i < groupTeams.length; i += 1) {
+        for (let j = i + 1; j < groupTeams.length; j += 1) {
+          matches.push({
+            tournamentId: tournament.id,
+            teamAId: groupTeams[i].id,
+            teamBId: groupTeams[j].id,
+            roundIndex: 1,
+            roundLabel: "دور المجموعات",
+            groupName: groupNameForIndex(groupIndex),
+          });
+        }
+      }
+    });
+  } else {
+    const label = knockoutRoundLabel(capacity);
+    for (let i = 0; i < teams.length; i += 2) {
+      if (!teams[i + 1]) break;
+      matches.push({
+        tournamentId: tournament.id,
+        teamAId: teams[i].id,
+        teamBId: teams[i + 1].id,
+        roundIndex: 1,
+        roundLabel: label,
+      });
+    }
+  }
+  return matches;
+}
+
 router.get("/tournaments", optionalAuthenticateToken, async (req, res) => {
   try {
     const scope = getGovernorateScope(req, { allowQuery: true });
@@ -90,6 +245,7 @@ router.get("/tournaments/:id", authenticateToken, async (req, res) => {
       ],
     });
     const data = detail.toJSON();
+    attachOverallToSlots(data.slots);
     data.mySlot = data.slots.find((slot) => Number(slot.userId) === Number(req.user.id)) || null;
     return res.json(data);
   } catch (error) {
@@ -125,6 +281,31 @@ router.post("/tournaments", authenticateToken, upload.single("bannerImage"), asy
   } catch (error) {
     if (transaction) await transaction.rollback();
     console.error("Create tournament error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.post("/tournaments/:id/start", authenticateToken, async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    if (!canManage(req.user)) { await transaction.rollback(); return res.status(403).json({ error: "Not allowed" }); }
+    const tournament = await tournamentForRequest(req, res, req.params.id, transaction);
+    if (!tournament) { await transaction.rollback(); return; }
+    if (tournament.status !== "open") {
+      await transaction.rollback();
+      return res.status(400).json({ error: "البطولة بدأت أو مغلقة مسبقاً" });
+    }
+    await tournament.update({ status: "closed" }, { transaction });
+    const existingMatches = await TournamentMatch.count({ where: { tournamentId: tournament.id }, transaction });
+    if (existingMatches === 0) {
+      const matches = await buildInitialTournamentMatches(tournament, transaction);
+      if (matches.length) await TournamentMatch.bulkCreate(matches, { transaction });
+    }
+    await transaction.commit();
+    return res.json({ message: "تم بدء البطولة وإغلاق التسجيل", tournament });
+  } catch (error) {
+    await transaction.rollback();
+    console.error("Start tournament error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
@@ -202,6 +383,10 @@ router.post("/tournaments/:id/teams/:teamId/slots/:slotId/assign", authenticateT
       lock: transaction.LOCK.UPDATE,
     });
     if (!team) { await transaction.rollback(); return res.status(404).json({ error: "الفريق غير موجود" }); }
+    if (tournament.status !== "open" && !canManage(req.user)) {
+      await transaction.rollback();
+      return res.status(403).json({ error: "التسجيل مغلق، الادمن فقط يستطيع إضافة اللاعبين" });
+    }
     if (!canManage(req.user) && Number(team.createdBy) !== Number(req.user.id)) {
       await transaction.rollback();
       return res.status(403).json({ error: "فقط قائد الفريق يستطيع إضافة اللاعبين" });
@@ -242,6 +427,274 @@ router.delete("/tournaments/:id/slots/:slotId", authenticateToken, async (req, r
     await slot.update({ userId: null, assignedAt: null });
     return res.json({ message: "تم حذف الحجز" });
   } catch (error) { console.error("Remove tournament slot error:", error); return res.status(500).json({ error: "Internal Server Error" }); }
+});
+
+router.post("/tournaments/:id/draw/generate", authenticateToken, async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    if (!canManage(req.user)) { await transaction.rollback(); return res.status(403).json({ error: "Not allowed" }); }
+    const tournament = await tournamentForRequest(req, res, req.params.id, transaction);
+    if (!tournament) { await transaction.rollback(); return; }
+    const teams = await qualifiedTeams(tournament.id, transaction);
+    if (teams.length < 2) {
+      await transaction.rollback();
+      return res.status(400).json({ error: "لا توجد فرق كافية لإنشاء القرعة" });
+    }
+
+    await TournamentMatch.destroy({ where: { tournamentId: tournament.id }, transaction });
+
+    const capacity = Number(tournament.teamCapacity);
+    const matches = [];
+    if (capacity === 64 || tournament.competitionFormat === "groups") {
+      const groupCount = 16;
+      const grouped = Array.from({ length: groupCount }, () => []);
+      teams.forEach((team, index) => grouped[index % groupCount].push(team));
+      grouped.forEach((groupTeams, groupIndex) => {
+        for (let i = 0; i < groupTeams.length; i += 1) {
+          for (let j = i + 1; j < groupTeams.length; j += 1) {
+            matches.push({
+              tournamentId: tournament.id,
+              teamAId: groupTeams[i].id,
+              teamBId: groupTeams[j].id,
+              roundIndex: 1,
+              roundLabel: "دور المجموعات",
+              groupName: groupNameForIndex(groupIndex),
+            });
+          }
+        }
+      });
+    } else {
+      const label = knockoutRoundLabel(capacity);
+      for (let i = 0; i < teams.length; i += 2) {
+        if (!teams[i + 1]) break;
+        matches.push({
+          tournamentId: tournament.id,
+          teamAId: teams[i].id,
+          teamBId: teams[i + 1].id,
+          roundIndex: 1,
+          roundLabel: label,
+        });
+      }
+    }
+
+    await TournamentMatch.bulkCreate(matches, { transaction });
+    await transaction.commit();
+    return res.status(201).json({ message: "تم إنشاء القرعة", count: matches.length });
+  } catch (error) {
+    await transaction.rollback();
+    console.error("Generate tournament draw error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.get("/tournaments/:id/matches", authenticateToken, async (req, res) => {
+  try {
+    const tournament = await tournamentForRequest(req, res, req.params.id);
+    if (!tournament) return;
+    const matches = await TournamentMatch.findAll({
+      where: { tournamentId: tournament.id },
+      include: teamInclude(),
+      order: [["roundIndex", "ASC"], ["groupName", "ASC"], ["id", "ASC"]],
+    });
+    return res.json({
+      tournament,
+      matches: matches.map(serializeMatch),
+    });
+  } catch (error) {
+    console.error("Get tournament matches error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.post("/tournaments/:id/matches", authenticateToken, async (req, res) => {
+  try {
+    if (!canManage(req.user)) return res.status(403).json({ error: "Not allowed" });
+    const tournament = await tournamentForRequest(req, res, req.params.id);
+    if (!tournament) return;
+    const teamAId = toNumber(req.body.teamAId);
+    const teamBId = toNumber(req.body.teamBId);
+    if (!teamAId || !teamBId || teamAId === teamBId) {
+      return res.status(400).json({ error: "اختر فريقين مختلفين" });
+    }
+    const count = await TournamentTeam.count({
+      where: { tournamentId: tournament.id, id: { [Op.in]: [teamAId, teamBId] } },
+    });
+    if (count !== 2) return res.status(400).json({ error: "الفرق المختارة غير صحيحة" });
+    const match = await TournamentMatch.create({
+      tournamentId: tournament.id,
+      teamAId,
+      teamBId,
+      roundIndex: toNumber(req.body.roundIndex) || 1,
+      roundLabel: String(req.body.roundLabel || "الجولة 1").trim(),
+      groupName: req.body.groupName ? String(req.body.groupName).trim() : null,
+      startsAt: req.body.startsAt || null,
+    });
+    return res.status(201).json({ message: "تمت إضافة المباراة", match });
+  } catch (error) {
+    console.error("Create tournament match error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.patch("/tournaments/:id/matches/:matchId", authenticateToken, async (req, res) => {
+  try {
+    if (!canManage(req.user)) return res.status(403).json({ error: "Not allowed" });
+    const tournament = await tournamentForRequest(req, res, req.params.id);
+    if (!tournament) return;
+    const match = await TournamentMatch.findOne({ where: { id: req.params.matchId, tournamentId: tournament.id } });
+    if (!match) return res.status(404).json({ error: "المباراة غير موجودة" });
+    if (match.status !== "scheduled") return res.status(400).json({ error: "لا يمكن تعديل مباراة بدأت أو انتهت" });
+    const updates = {};
+    for (const key of ["teamAId", "teamBId", "roundIndex", "roundLabel", "groupName", "startsAt", "status"]) {
+      if (req.body[key] !== undefined) updates[key] = req.body[key] || null;
+    }
+    if (updates.teamAId && updates.teamBId && Number(updates.teamAId) === Number(updates.teamBId)) {
+      return res.status(400).json({ error: "اختر فريقين مختلفين" });
+    }
+    await match.update(updates);
+    return res.json({ message: "تم تحديث المباراة", match });
+  } catch (error) {
+    console.error("Update tournament match error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.get("/tournaments/:id/matches/:matchId/results", authenticateToken, async (req, res) => {
+  try {
+    const tournament = await tournamentForRequest(req, res, req.params.id);
+    if (!tournament) return;
+    const match = await TournamentMatch.findOne({
+      where: { id: req.params.matchId, tournamentId: tournament.id },
+      include: teamInclude(),
+    });
+    if (!match) return res.status(404).json({ error: "المباراة غير موجودة" });
+    const lineups = await TournamentSlot.findAll({
+      where: {
+        tournamentId: tournament.id,
+        tournamentTeamId: { [Op.in]: [match.teamAId, match.teamBId] },
+      },
+      include: [{ model: User, as: "user", attributes: userAttributes, required: false }],
+      order: [["tournamentTeamId", "ASC"], ["role", "ASC"], ["code", "ASC"]],
+    });
+    const mappedLineups = lineups.map((slot) => slot.toJSON());
+    attachOverallToSlots(mappedLineups);
+    return res.json({ tournament, match: serializeMatch(match), lineups: mappedLineups });
+  } catch (error) {
+    console.error("Get tournament match result error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.post("/tournaments/:id/matches/:matchId/results", authenticateToken, async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    if (!canManage(req.user)) { await transaction.rollback(); return res.status(403).json({ error: "Not allowed" }); }
+    const tournament = await tournamentForRequest(req, res, req.params.id, transaction);
+    if (!tournament) { await transaction.rollback(); return; }
+    const match = await TournamentMatch.findOne({
+      where: { id: req.params.matchId, tournamentId: tournament.id },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!match) { await transaction.rollback(); return res.status(404).json({ error: "المباراة غير موجودة" }); }
+
+    const matchStats = req.body.matchStats || {};
+    const playersStats = Array.isArray(req.body.playersStats) ? req.body.playersStats : [];
+    const motmUserId = req.body.motmUserId ? Number(req.body.motmUserId) : null;
+    let possessionA = Number(matchStats.possessionA ?? 50);
+    let possessionB = Number(matchStats.possessionB ?? (100 - possessionA));
+    if (!Number.isFinite(possessionA)) possessionA = 50;
+    if (!Number.isFinite(possessionB)) possessionB = 50;
+
+    await TournamentMatchStats.upsert({
+      tournamentMatchId: match.id,
+      offsidesA: Number(matchStats.offsidesA) || 0,
+      offsidesB: Number(matchStats.offsidesB) || 0,
+      cornersA: Number(matchStats.cornersA) || 0,
+      cornersB: Number(matchStats.cornersB) || 0,
+      bigChancesA: Number(matchStats.bigChancesA) || 0,
+      bigChancesB: Number(matchStats.bigChancesB) || 0,
+      shotsA: Number(matchStats.shotsA) || 0,
+      shotsB: Number(matchStats.shotsB) || 0,
+      xgA: Number(matchStats.xgA) || 0,
+      xgB: Number(matchStats.xgB) || 0,
+      possessionA,
+      possessionB,
+    }, { transaction });
+
+    await TournamentPlayerMatchStats.destroy({ where: { tournamentMatchId: match.id }, transaction });
+    for (const item of playersStats) {
+      const userId = Number(item.userId);
+      const teamSide = item.teamSide === "B" || item.team === "B" ? "B" : "A";
+      const tournamentTeamId = teamSide === "A" ? match.teamAId : match.teamBId;
+      if (!Number.isInteger(userId) || userId <= 0) continue;
+      await TournamentPlayerMatchStats.create({
+        tournamentMatchId: match.id,
+        tournamentId: tournament.id,
+        userId,
+        teamSide,
+        tournamentTeamId,
+        goals: Number(item.goals) || 0,
+        assists: Number(item.assists) || 0,
+        yellowCards: Number(item.yellowCards) || 0,
+        redCards: Number(item.redCards) || 0,
+        isMotm: motmUserId ? userId === motmUserId : false,
+        individualAward: item.individualAward || null,
+      }, { transaction });
+    }
+    await match.update({ status: "closed" }, { transaction });
+    await transaction.commit();
+    return res.json({ message: "تم حفظ نتيجة مباراة البطولة" });
+  } catch (error) {
+    await transaction.rollback();
+    console.error("Save tournament match result error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.get("/tournaments/:id/dashboard", authenticateToken, async (req, res) => {
+  try {
+    const tournament = await tournamentForRequest(req, res, req.params.id);
+    if (!tournament) return;
+    const stats = await TournamentPlayerMatchStats.findAll({
+      where: { tournamentId: tournament.id },
+      include: statsIncludeUser,
+    });
+    const byUser = new Map();
+    for (const row of stats.map((item) => item.toJSON())) {
+      const current = byUser.get(row.userId) || {
+        user: row.user,
+        games: 0,
+        goals: 0,
+        assists: 0,
+        yellowCards: 0,
+        redCards: 0,
+        motm: 0,
+      };
+      current.games += 1;
+      current.goals += Number(row.goals) || 0;
+      current.assists += Number(row.assists) || 0;
+      current.yellowCards += Number(row.yellowCards) || 0;
+      current.redCards += Number(row.redCards) || 0;
+      if (row.isMotm) current.motm += 1;
+      if (current.user) current.user.overall = calcOverall(current.user);
+      byUser.set(row.userId, current);
+    }
+    const players = [...byUser.values()];
+    const top = (key) => [...players].sort((a, b) => (b[key] || 0) - (a[key] || 0)).slice(0, 10);
+    return res.json({
+      tournament,
+      leaders: {
+        goals: top("goals"),
+        assists: top("assists"),
+        cards: [...players].sort((a, b) => ((b.yellowCards + b.redCards) - (a.yellowCards + a.redCards))).slice(0, 10),
+        motm: top("motm"),
+      },
+    });
+  } catch (error) {
+    console.error("Tournament dashboard error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
 });
 
 router.delete("/tournaments/:id", authenticateToken, async (req, res) => {

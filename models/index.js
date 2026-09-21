@@ -20,6 +20,9 @@ const ChatPollVote = require("./ChatPollVote");
 const Tournament = require("./Tournament");
 const TournamentTeam = require("./TournamentTeam");
 const TournamentSlot = require("./TournamentSlot");
+const TournamentMatch = require("./TournamentMatch");
+const TournamentMatchStats = require("./TournamentMatchStats");
+const TournamentPlayerMatchStats = require("./TournamentPlayerMatchStats");
 
 Governorate.hasMany(User, {
   foreignKey: "governorateId",
@@ -149,6 +152,23 @@ TournamentTeam.belongsTo(User, { foreignKey: "createdBy", as: "creator" });
 User.hasMany(TournamentSlot, { foreignKey: "userId", as: "tournamentSlots", onDelete: "SET NULL" });
 TournamentSlot.belongsTo(User, { foreignKey: "userId", as: "user" });
 
+Tournament.hasMany(TournamentMatch, { foreignKey: "tournamentId", as: "matches", onDelete: "CASCADE", hooks: true });
+TournamentMatch.belongsTo(Tournament, { foreignKey: "tournamentId", as: "tournament" });
+TournamentTeam.hasMany(TournamentMatch, { foreignKey: "teamAId", as: "homeTournamentMatches", onDelete: "CASCADE" });
+TournamentTeam.hasMany(TournamentMatch, { foreignKey: "teamBId", as: "awayTournamentMatches", onDelete: "CASCADE" });
+TournamentMatch.belongsTo(TournamentTeam, { foreignKey: "teamAId", as: "teamA" });
+TournamentMatch.belongsTo(TournamentTeam, { foreignKey: "teamBId", as: "teamB" });
+TournamentMatch.hasOne(TournamentMatchStats, { foreignKey: "tournamentMatchId", as: "matchStats", onDelete: "CASCADE", hooks: true });
+TournamentMatchStats.belongsTo(TournamentMatch, { foreignKey: "tournamentMatchId", as: "match" });
+TournamentMatch.hasMany(TournamentPlayerMatchStats, { foreignKey: "tournamentMatchId", as: "playerStats", onDelete: "CASCADE", hooks: true });
+TournamentPlayerMatchStats.belongsTo(TournamentMatch, { foreignKey: "tournamentMatchId", as: "match" });
+Tournament.hasMany(TournamentPlayerMatchStats, { foreignKey: "tournamentId", as: "playerStats", onDelete: "CASCADE", hooks: true });
+TournamentPlayerMatchStats.belongsTo(Tournament, { foreignKey: "tournamentId", as: "tournament" });
+TournamentTeam.hasMany(TournamentPlayerMatchStats, { foreignKey: "tournamentTeamId", as: "matchPlayerStats", onDelete: "CASCADE" });
+TournamentPlayerMatchStats.belongsTo(TournamentTeam, { foreignKey: "tournamentTeamId", as: "team" });
+User.hasMany(TournamentPlayerMatchStats, { foreignKey: "userId", as: "tournamentPlayerStats", onDelete: "CASCADE" });
+TournamentPlayerMatchStats.belongsTo(User, { foreignKey: "userId", as: "user" });
+
 module.exports = {
   User,
   Governorate,
@@ -172,4 +192,7 @@ module.exports = {
   Tournament,
   TournamentTeam,
   TournamentSlot,
+  TournamentMatch,
+  TournamentMatchStats,
+  TournamentPlayerMatchStats,
 };
