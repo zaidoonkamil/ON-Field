@@ -127,22 +127,11 @@ async function qualifiedTeams(tournamentId, transaction) {
   });
 }
 
-async function ensureTournamentTeamsForBookedSlots(tournament, transaction) {
-  const bookedTeamNumbers = await TournamentSlot.findAll({
-    where: {
-      tournamentId: tournament.id,
-      userId: { [Op.ne]: null },
-    },
-    attributes: ["teamNumber"],
-    group: ["teamNumber"],
-    order: [["teamNumber", "ASC"]],
-    transaction,
-  });
+async function ensureTournamentTeams(tournament, transaction) {
+  const capacity = Number(tournament.teamCapacity);
+  if (!Number.isInteger(capacity) || capacity < 2) return [];
 
-  for (const row of bookedTeamNumbers) {
-    const teamNumber = Number(row.teamNumber);
-    if (!Number.isInteger(teamNumber)) continue;
-
+  for (let teamNumber = 1; teamNumber <= capacity; teamNumber += 1) {
     let team = await TournamentTeam.findOne({
       where: { tournamentId: tournament.id, teamNumber },
       transaction,
@@ -164,6 +153,8 @@ async function ensureTournamentTeamsForBookedSlots(tournament, transaction) {
       { where: { tournamentId: tournament.id, teamNumber }, transaction }
     );
   }
+
+  return qualifiedTeams(tournament.id, transaction);
 }
 
 function knockoutRoundLabel(capacity, index) {
@@ -178,8 +169,7 @@ function groupNameForIndex(index) {
 }
 
 async function buildInitialTournamentMatches(tournament, transaction) {
-  await ensureTournamentTeamsForBookedSlots(tournament, transaction);
-  const teams = await qualifiedTeams(tournament.id, transaction);
+  const teams = await ensureTournamentTeams(tournament, transaction);
   if (teams.length < 2) return [];
 
   const capacity = Number(tournament.teamCapacity);
@@ -435,7 +425,7 @@ router.post("/tournaments/:id/draw/generate", authenticateToken, async (req, res
     if (!canManage(req.user)) { await transaction.rollback(); return res.status(403).json({ error: "Not allowed" }); }
     const tournament = await tournamentForRequest(req, res, req.params.id, transaction);
     if (!tournament) { await transaction.rollback(); return; }
-    const teams = await qualifiedTeams(tournament.id, transaction);
+    const teams = await ensureTournamentTeams(tournament, transaction);
     if (teams.length < 2) {
       await transaction.rollback();
       return res.status(400).json({ error: "لا توجد فرق كافية لإنشاء القرعة" });
