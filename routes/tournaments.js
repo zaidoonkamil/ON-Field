@@ -97,9 +97,13 @@ function serializeMatch(match) {
   for (const stat of playerStats) {
     attachOverallToUser(stat.user);
   }
+  const storedScoreA = data.scoreA == null ? null : Number(data.scoreA);
+  const storedScoreB = data.scoreB == null ? null : Number(data.scoreB);
   return {
     ...data,
-    score: matchScore(playerStats),
+    score: Number.isFinite(storedScoreA) && Number.isFinite(storedScoreB)
+      ? { goalsA: storedScoreA, goalsB: storedScoreB }
+      : matchScore(playerStats),
   };
 }
 
@@ -285,11 +289,16 @@ async function syncClosedKnockoutWinners(tournament, transaction) {
   });
 
   for (const match of closedMatches) {
-    const playerStats = await TournamentPlayerMatchStats.findAll({
-      where: { tournamentMatchId: match.id },
-      transaction,
-    });
-    const score = matchScore(playerStats.map((item) => item.toJSON()));
+    let score = null;
+    if (match.scoreA != null && match.scoreB != null) {
+      score = { goalsA: Number(match.scoreA) || 0, goalsB: Number(match.scoreB) || 0 };
+    } else {
+      const playerStats = await TournamentPlayerMatchStats.findAll({
+        where: { tournamentMatchId: match.id },
+        transaction,
+      });
+      score = matchScore(playerStats.map((item) => item.toJSON()));
+    }
     if (score.goalsA === score.goalsB) continue;
     await advanceKnockoutWinner(
       tournament,
@@ -656,6 +665,7 @@ router.post("/tournaments/:id/matches/:matchId/results", authenticateToken, asyn
     const matchStats = req.body.matchStats || {};
     const playersStats = Array.isArray(req.body.playersStats) ? req.body.playersStats : [];
     const motmUserId = req.body.motmUserId ? Number(req.body.motmUserId) : null;
+    const directScore = req.body.score || {};
     let possessionA = Number(matchStats.possessionA ?? 50);
     let possessionB = Number(matchStats.possessionB ?? (100 - possessionA));
     if (!Number.isFinite(possessionA)) possessionA = 50;
@@ -701,12 +711,19 @@ router.post("/tournaments/:id/matches/:matchId/results", authenticateToken, asyn
         individualAward: item.individualAward || null,
       }, { transaction });
     }
-    await match.update({ status: "closed" }, { transaction });
-    if (goalsA !== goalsB) {
+    const scoreA = Number.isFinite(Number(directScore.goalsA ?? directScore.scoreA))
+      ? Number(directScore.goalsA ?? directScore.scoreA)
+      : goalsA;
+    const scoreB = Number.isFinite(Number(directScore.goalsB ?? directScore.scoreB))
+      ? Number(directScore.goalsB ?? directScore.scoreB)
+      : goalsB;
+
+    await match.update({ status: "closed", scoreA, scoreB }, { transaction });
+    if (scoreA !== scoreB) {
       await advanceKnockoutWinner(
         tournament,
         match,
-        goalsA > goalsB ? match.teamAId : match.teamBId,
+        scoreA > scoreB ? match.teamAId : match.teamBId,
         transaction
       );
     }

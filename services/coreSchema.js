@@ -100,6 +100,8 @@ async function ensureTournamentSchema(queryInterface) {
   });
   await queryInterface.changeColumn(TournamentMatch.getTableName(), "teamAId", nullableInteger);
   await queryInterface.changeColumn(TournamentMatch.getTableName(), "teamBId", nullableInteger);
+  await ensureColumn(queryInterface, TournamentMatch.getTableName(), "scoreA", nullableInteger);
+  await ensureColumn(queryInterface, TournamentMatch.getTableName(), "scoreB", nullableInteger);
   console.log("Tournament schema ready.");
 }
 
