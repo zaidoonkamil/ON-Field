@@ -2,7 +2,16 @@ const fs = require("fs");
 const path = require("path");
 const { DataTypes, Op } = require("sequelize");
 const sequelize = require("../config/db");
-const { Message, User, Governorate, ChatPoll, ChatPollOption, ChatPollVote } = require("../models");
+const {
+  Message,
+  User,
+  Governorate,
+  ChatPoll,
+  ChatPollOption,
+  ChatPollVote,
+  TournamentTeam,
+  TournamentSlot,
+} = require("../models");
 const { sendNotificationToUser, sendChatNotificationToAllExcept } = require("./notifications");
 
 const MAX_MESSAGES_PER_ROOM = 100;
@@ -27,6 +36,20 @@ class ChatService {
 
   isSupportRoom(room) {
     return typeof room === "string" && /^support_\d+$/.test(room);
+  }
+
+  isTournamentTeamRoom(room) {
+    return typeof room === "string" && /^tournament_\d+_team_\d+$/.test(room);
+  }
+
+  getTournamentTeamRoomParts(room) {
+    if (!this.isTournamentTeamRoom(room)) return null;
+    const match = room.match(/^tournament_(\d+)_team_(\d+)$/);
+    if (!match) return null;
+    return {
+      tournamentId: Number(match[1]),
+      teamId: Number(match[2]),
+    };
   }
 
   getAnnouncementsRoomForGovernorateId(governorateId) {
@@ -136,6 +159,33 @@ class ChatService {
         (user.role === "admin" &&
           Number(user.governorateId) === Number(supportUser.governorateId));
       if (!canAccessSupport) throw new Error("Not allowed for this room");
+      return normalizedRequestedRoom;
+    }
+
+    if (this.isTournamentTeamRoom(normalizedRequestedRoom)) {
+      const parts = this.getTournamentTeamRoomParts(normalizedRequestedRoom);
+      const team = parts
+        ? await TournamentTeam.findOne({
+            where: { id: parts.teamId, tournamentId: parts.tournamentId },
+            attributes: ["id", "tournamentId"],
+          })
+        : null;
+      if (!team) throw new Error("Tournament team not found");
+
+      const canAccessTournamentRoom =
+        this.isAdminRole(user.role) ||
+        Boolean(
+          await TournamentSlot.findOne({
+            where: {
+              tournamentId: parts.tournamentId,
+              tournamentTeamId: parts.teamId,
+              userId: user.id,
+            },
+            attributes: ["id"],
+          })
+        );
+
+      if (!canAccessTournamentRoom) throw new Error("Not allowed for this room");
       return normalizedRequestedRoom;
     }
 
