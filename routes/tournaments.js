@@ -827,6 +827,7 @@ router.post("/tournaments/:id/matches/:matchId/results", authenticateToken, asyn
         transaction
       );
     }
+    await rebuildKnockoutProgression(tournament, transaction);
     await transaction.commit();
     return res.json({ message: "تم حفظ نتيجة مباراة البطولة" });
   } catch (error) {
