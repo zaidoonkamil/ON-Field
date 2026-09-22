@@ -228,6 +228,36 @@ async function buildInitialTournamentMatches(tournament, transaction) {
   return matches;
 }
 
+async function ensureKnockoutBracketSkeleton(tournament, transaction) {
+  if (tournament.competitionFormat === "groups") return;
+  const capacity = Number(tournament.teamCapacity);
+  const totalRounds = Math.log2(capacity);
+  if (!Number.isInteger(totalRounds) || totalRounds < 1) return;
+
+  await ensureTournamentTeams(tournament, transaction);
+
+  for (let roundIndex = 2; roundIndex <= totalRounds; roundIndex += 1) {
+    const expectedCount = capacity / Math.pow(2, roundIndex);
+    const existingCount = await TournamentMatch.count({
+      where: { tournamentId: tournament.id, roundIndex },
+      transaction,
+    });
+    const missingCount = expectedCount - existingCount;
+    if (missingCount <= 0) continue;
+
+    const roundLabel = knockoutRoundLabel(capacity, roundIndex);
+    const missingMatches = Array.from({ length: missingCount }, () => ({
+      tournamentId: tournament.id,
+      teamAId: null,
+      teamBId: null,
+      roundIndex,
+      roundLabel,
+      status: "scheduled",
+    }));
+    await TournamentMatch.bulkCreate(missingMatches, { transaction });
+  }
+}
+
 async function advanceKnockoutWinner(tournament, match, winnerTeamId, transaction) {
   if (!winnerTeamId || tournament.competitionFormat === "groups") return;
 
@@ -235,6 +265,7 @@ async function advanceKnockoutWinner(tournament, match, winnerTeamId, transactio
   const totalRounds = Math.log2(capacity);
   const currentRound = Number(match.roundIndex) || 1;
   if (!Number.isInteger(totalRounds) || currentRound >= totalRounds) return;
+  await ensureKnockoutBracketSkeleton(tournament, transaction);
 
   const currentRoundMatches = await TournamentMatch.findAll({
     where: { tournamentId: tournament.id, roundIndex: currentRound },
@@ -551,6 +582,7 @@ router.get("/tournaments/:id/matches", authenticateToken, async (req, res) => {
   try {
     const tournament = await tournamentForRequest(req, res, req.params.id, transaction);
     if (!tournament) { await transaction.rollback(); return; }
+    await ensureKnockoutBracketSkeleton(tournament, transaction);
     await syncClosedKnockoutWinners(tournament, transaction);
     const matches = await TournamentMatch.findAll({
       where: { tournamentId: tournament.id },
@@ -661,6 +693,7 @@ router.post("/tournaments/:id/matches/:matchId/results", authenticateToken, asyn
       lock: transaction.LOCK.UPDATE,
     });
     if (!match) { await transaction.rollback(); return res.status(404).json({ error: "المباراة غير موجودة" }); }
+    await ensureKnockoutBracketSkeleton(tournament, transaction);
 
     const matchStats = req.body.matchStats || {};
     const playersStats = Array.isArray(req.body.playersStats) ? req.body.playersStats : [];
