@@ -238,10 +238,23 @@ async function ensureKnockoutBracketSkeleton(tournament, transaction) {
 
   for (let roundIndex = 2; roundIndex <= totalRounds; roundIndex += 1) {
     const expectedCount = capacity / Math.pow(2, roundIndex);
-    const existingCount = await TournamentMatch.count({
+    const existingMatches = await TournamentMatch.findAll({
       where: { tournamentId: tournament.id, roundIndex },
+      order: [["id", "ASC"]],
       transaction,
+      lock: transaction.LOCK.UPDATE,
     });
+    const removableExtraIds = existingMatches
+      .slice(expectedCount)
+      .filter((match) => match.status === "scheduled" && match.scoreA == null && match.scoreB == null)
+      .map((match) => match.id);
+    if (removableExtraIds.length) {
+      await TournamentMatch.destroy({
+        where: { id: { [Op.in]: removableExtraIds } },
+        transaction,
+      });
+    }
+    const existingCount = existingMatches.length - removableExtraIds.length;
     const missingCount = expectedCount - existingCount;
     if (missingCount <= 0) continue;
 
