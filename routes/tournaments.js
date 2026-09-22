@@ -323,8 +323,62 @@ async function advanceKnockoutWinner(tournament, match, winnerTeamId, transactio
   }, { transaction });
 }
 
+async function winnerTeamIdForMatch(match, transaction) {
+  if (!match || match.status !== "closed") return null;
+  let goalsA = match.scoreA == null ? null : Number(match.scoreA);
+  let goalsB = match.scoreB == null ? null : Number(match.scoreB);
+  if (!Number.isFinite(goalsA) || !Number.isFinite(goalsB)) {
+    const playerStats = await TournamentPlayerMatchStats.findAll({
+      where: { tournamentMatchId: match.id },
+      transaction,
+    });
+    const score = matchScore(playerStats.map((item) => item.toJSON()));
+    goalsA = score.goalsA;
+    goalsB = score.goalsB;
+  }
+  if (goalsA === goalsB) return null;
+  return goalsA > goalsB ? match.teamAId : match.teamBId;
+}
+
+async function rebuildKnockoutProgression(tournament, transaction) {
+  if (tournament.competitionFormat === "groups") return;
+  const capacity = Number(tournament.teamCapacity);
+  const totalRounds = Math.log2(capacity);
+  if (!Number.isInteger(totalRounds) || totalRounds < 2) return;
+
+  await ensureKnockoutBracketSkeleton(tournament, transaction);
+
+  for (let roundIndex = 1; roundIndex < totalRounds; roundIndex += 1) {
+    const currentRoundMatches = await TournamentMatch.findAll({
+      where: { tournamentId: tournament.id, roundIndex },
+      order: [["id", "ASC"]],
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    const nextRoundMatches = await TournamentMatch.findAll({
+      where: { tournamentId: tournament.id, roundIndex: roundIndex + 1 },
+      order: [["id", "ASC"]],
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+
+    for (let nextIndex = 0; nextIndex < nextRoundMatches.length; nextIndex += 1) {
+      const nextMatch = nextRoundMatches[nextIndex];
+      if (nextMatch.status === "closed") continue;
+      const firstWinner = await winnerTeamIdForMatch(currentRoundMatches[nextIndex * 2], transaction);
+      const secondWinner = await winnerTeamIdForMatch(currentRoundMatches[(nextIndex * 2) + 1], transaction);
+      await nextMatch.update({
+        teamAId: firstWinner,
+        teamBId: secondWinner,
+        roundLabel: knockoutRoundLabel(capacity, roundIndex + 1),
+      }, { transaction });
+    }
+  }
+}
+
 async function syncClosedKnockoutWinners(tournament, transaction) {
   if (tournament.competitionFormat === "groups") return;
+  await rebuildKnockoutProgression(tournament, transaction);
   const closedMatches = await TournamentMatch.findAll({
     where: { tournamentId: tournament.id, status: "closed" },
     order: [["roundIndex", "ASC"], ["id", "ASC"]],
